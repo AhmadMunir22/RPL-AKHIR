@@ -1,0 +1,2 @@
+.slot-available { background-color: rgba(0, 255, 0, 0.2); border: 1px solid #00ff00; }
+.slot-booked { background-color: rgba(255, 0, 0, 0.2); border: 1px solid #ff0000; }

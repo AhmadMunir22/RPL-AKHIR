@@ -1,0 +1,22 @@
+{
+  "name": "PadelBook Reservation System",
+  "short_name": "PadelBook",
+  "description": "Reservasi Lapangan Padel Modern & Real-Time",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://img.icons8.com/color/192/000000/tennis.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://img.icons8.com/color/512/000000/tennis.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}
