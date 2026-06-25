@@ -60,7 +60,7 @@ class BookingService
             return $resolver();
         }
 
-        $cacheKey = "court_{$courtId}_avail_{$date}";
+        $cacheKey = "court_{$courtId}_avail_v2_{$date}";
 
         return Cache::remember($cacheKey, 15, $resolver);
     }
@@ -85,7 +85,10 @@ class BookingService
             ->flatten()
             ->all();
 
-        return array_values(array_unique(array_merge($booked, $blocked)));
+        return [
+            'booked' => array_values(array_unique($booked)),
+            'blocked' => array_values(array_unique($blocked)),
+        ];
     }
 
     protected function bookingSlotsTableExists(): bool
@@ -139,14 +142,24 @@ class BookingService
      */
     public function getAvailability(int $courtId, string $date): array
     {
-        Court::findOrFail($courtId);
-        $booked = $this->getBookedSlots($courtId, $date, true);
+        $court = Court::findOrFail($courtId);
+        $slotsData = $this->getBookedSlots($courtId, $date, true);
+        
+        $booked = $slotsData['booked'] ?? [];
+        $blocked = $slotsData['blocked'] ?? [];
 
         $availability = [];
+        $isActive = ($court->status === 'active');
+        
         foreach ($this->getOperationalSlots() as $slot) {
+            $isBooked = in_array($slot, $booked, true);
+            $isBlocked = in_array($slot, $blocked, true);
+            $isAvailable = $isActive && !$isBooked && !$isBlocked;
+
             $availability[] = [
                 'slot' => $slot,
-                'is_available' => !in_array($slot, $booked, true),
+                'is_available' => $isAvailable,
+                'is_blocked' => $isBlocked || !$isActive,
             ];
         }
 
@@ -160,6 +173,11 @@ class BookingService
      */
     public function assertSlotsAvailable(int $courtId, string $date, array $slots): void
     {
+        $court = Court::findOrFail($courtId);
+        if ($court->status !== 'active') {
+            throw new \RuntimeException("Lapangan ini sedang dalam pemeliharaan dan tidak dapat dipesan.");
+        }
+
         $slots = array_values(array_unique($slots));
         $operational = $this->getOperationalSlots();
 
@@ -169,10 +187,16 @@ class BookingService
             }
         }
 
-        $booked = $this->getBookedSlots($courtId, $date, false);
+        $slotsData = $this->getBookedSlots($courtId, $date, false);
+        $booked = $slotsData['booked'] ?? [];
+        $blocked = $slotsData['blocked'] ?? [];
+        $allUnavailable = array_merge($booked, $blocked);
 
         foreach ($slots as $slot) {
-            if (in_array($slot, $booked, true)) {
+            if (in_array($slot, $allUnavailable, true)) {
+                if (in_array($slot, $blocked, true)) {
+                    throw new \RuntimeException("Jam {$slot} sedang dalam pemeliharaan. Silakan pilih jam lain.");
+                }
                 throw new \RuntimeException("Jam {$slot} sudah dipesan. Silakan pilih jam lain.");
             }
         }
@@ -251,6 +275,7 @@ class BookingService
     public function clearAvailabilityCache(int $courtId, string $date): void
     {
         Cache::forget("court_{$courtId}_avail_{$date}");
+        Cache::forget("court_{$courtId}_avail_v2_{$date}");
     }
 
     /**

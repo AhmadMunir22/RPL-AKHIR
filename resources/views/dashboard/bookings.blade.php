@@ -48,6 +48,7 @@
                                         $psColor = match($booking->payment_status) {
                                             'paid' => 'success',
                                             'partial' => 'warning',
+                                            'awaiting_approval' => 'info',
                                             'failed' => 'danger',
                                             'refunded' => 'secondary',
                                             default => 'danger'
@@ -55,6 +56,7 @@
                                         $psLabel = match($booking->payment_status) {
                                             'paid' => 'LUNAS',
                                             'partial' => 'DP TERBAYAR',
+                                            'awaiting_approval' => 'MENUNGGU PERSETUJUAN',
                                             'failed' => 'GAGAL',
                                             'refunded' => 'DIKEMBALIKAN',
                                             default => 'BELUM BAYAR'

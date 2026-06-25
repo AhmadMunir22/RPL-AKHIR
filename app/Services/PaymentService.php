@@ -18,9 +18,9 @@ class PaymentService
 
     public function __construct()
     {
-        $this->dokuClientId = env('DOKU_CLIENT_ID', '');
-        $this->dokuSecretKey = env('DOKU_SECRET_KEY', '');
-        $this->dokuIsProduction = env('DOKU_IS_PRODUCTION', false);
+        $this->dokuClientId = config('services.doku.client_id', '');
+        $this->dokuSecretKey = config('services.doku.secret_key', '');
+        $this->dokuIsProduction = config('services.doku.is_production', false);
     }
 
 
@@ -43,6 +43,7 @@ class PaymentService
                 "amount" => (int) $amountToPay,
                 "invoice_number" => "BOOK-" . $booking->id . "-" . time(),
                 "callback_url" => route('dashboard.bookings'),
+                "notification_url" => route('booking.callback-doku'),
                 "auto_redirect" => true
             ],
             "payment" => [

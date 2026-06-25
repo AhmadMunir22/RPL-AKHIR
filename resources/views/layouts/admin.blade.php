@@ -310,6 +310,11 @@
                 <i class="fa-solid fa-list-check"></i> Log Aktivitas
             </a>
 
+            <a href="{{ route('admin.login-logs') }}"
+               class="admin-sidebar-link {{ Route::is('admin.login-logs') ? 'active' : '' }}">
+                <i class="fa-solid fa-shield-halved"></i> Log IP Login
+            </a>
+
             <div class="sidebar-divider"></div>
 
             <a href="{{ route('landing') }}" class="admin-sidebar-link">

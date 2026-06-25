@@ -157,64 +157,97 @@ class PaymentController extends Controller
      */
     public function dokuCallback(Request $request)
     {
-        $payload = $request->all();
-        Log::info('DOKU Webhook Received: ', $payload);
+        $rawBody = $request->getContent();
+        $payload = json_decode($rawBody, true) ?? [];
 
-        // Validasi Tanda Tangan (Signature) DOKU
-        $clientId = $request->header('Client-Id');
-        $requestId = $request->header('Request-Id');
+        Log::info('DOKU Webhook Received', [
+            'headers' => [
+                'Client-Id'         => $request->header('Client-Id'),
+                'Request-Id'        => $request->header('Request-Id'),
+                'Request-Timestamp' => $request->header('Request-Timestamp'),
+                'Signature'         => $request->header('Signature'),
+            ],
+            'payload' => $payload,
+        ]);
+
+        // --- Validasi Tanda Tangan (Signature) DOKU ---
+        $clientId         = $request->header('Client-Id');
+        $requestId        = $request->header('Request-Id');
         $requestTimestamp = $request->header('Request-Timestamp');
-        $signatureHeader = $request->header('Signature');
+        $signatureHeader  = $request->header('Signature');
 
         if (!$clientId || !$requestId || !$requestTimestamp || !$signatureHeader) {
-            Log::warning('DOKU Webhook: Missing headers.');
-            return response()->json(['status' => 'ignored'], 400);
+            Log::warning('DOKU Webhook: Missing required headers.');
+            return response()->json(['status' => 'bad_request'], 400);
         }
 
-        $secretKey = env('DOKU_SECRET_KEY');
+        $secretKey  = config('services.doku.secret_key');
         $targetPath = $request->getPathInfo();
-        $rawBody = $request->getContent();
 
         $digest = base64_encode(hash('sha256', $rawBody, true));
+
         $signatureComponent = "Client-Id:" . $clientId . "\n"
             . "Request-Id:" . $requestId . "\n"
             . "Request-Timestamp:" . $requestTimestamp . "\n"
             . "Request-Target:" . $targetPath . "\n"
             . "Digest:" . $digest;
 
-        $calculatedSignature = "HMACSHA256=" . base64_encode(hash_hmac('sha256', $signatureComponent, $secretKey, true));
+        $calculatedSignature = "HMACSHA256=" . base64_encode(
+            hash_hmac('sha256', $signatureComponent, $secretKey, true)
+        );
 
         if (!hash_equals($calculatedSignature, $signatureHeader)) {
-            Log::error('DOKU Webhook: Invalid Signature.');
+            Log::error('DOKU Webhook: Invalid Signature.', [
+                'calculated' => $calculatedSignature,
+                'received'   => $signatureHeader,
+            ]);
             return response()->json(['status' => 'unauthorized'], 401);
         }
 
-        // Signature valid, proceed processing
-        if (!isset($payload['order']['invoice_number']) || !isset($payload['transaction']['status'])) {
+        // --- Signature valid, proses payload ---
+        $invoiceNumber     = $payload['order']['invoice_number'] ?? null;
+        $transactionStatus = $payload['transaction']['status']   ?? null;
+
+        if (!$invoiceNumber || !$transactionStatus) {
+            Log::warning('DOKU Webhook: Missing invoice_number or transaction status.', $payload);
             return response()->json(['status' => 'ignored']);
         }
 
-        $orderIdParts = explode('-', $payload['order']['invoice_number']);
-        if (count($orderIdParts) < 2) return response()->json(['status' => 'ignored']);
+        // Format invoice_number: "BOOK-{booking_id}-{timestamp}"
+        // Contoh: "BOOK-42-1750123456"  => parts = ['BOOK', '42', '1750123456']
+        $parts = explode('-', $invoiceNumber);
+        if (count($parts) < 2 || strtoupper($parts[0]) !== 'BOOK') {
+            Log::warning('DOKU Webhook: Unrecognized invoice_number format.', ['invoice_number' => $invoiceNumber]);
+            return response()->json(['status' => 'ignored']);
+        }
 
-        $bookingId = (int) $orderIdParts[1];
-        $transactionStatus = $payload['transaction']['status']; // 'SUCCESS' or 'FAILED'
-        $grossAmount = (float) $payload['order']['amount'];
-        $paymentType = 'doku_' . strtolower($payload['channel']['id'] ?? 'unknown');
-        $transactionId = $payload['transaction']['date'] ?? $payload['order']['invoice_number'];
+        $bookingId    = (int) $parts[1];
+        $grossAmount  = (float) ($payload['order']['amount'] ?? 0);
+        $paymentType  = 'doku_' . strtolower($payload['channel']['id'] ?? 'unknown');
+        $transactionId = $payload['transaction']['date'] ?? $invoiceNumber;
 
         if ($transactionStatus === 'SUCCESS') {
-            $this->processPaymentAction->execute(
-                $bookingId,
-                $paymentType,
-                $transactionId,
-                $grossAmount,
-                $payload,
-                'settlement'
-            );
-            Log::info("Booking #{$bookingId} marked as PAID via DOKU webhook.");
+            try {
+                $this->processPaymentAction->execute(
+                    $bookingId,
+                    $paymentType,
+                    $transactionId,
+                    $grossAmount,
+                    $payload,
+                    'settlement'
+                );
+                Log::info("DOKU Webhook: Booking #{$bookingId} berhasil dibayar via {$paymentType}.");
+            } catch (\Exception $e) {
+                Log::error("DOKU Webhook: Gagal memproses Booking #{$bookingId}. Error: " . $e->getMessage());
+                // Tetap return 200 agar DOKU tidak mengirim ulang
+            }
         } elseif ($transactionStatus === 'FAILED') {
-            Log::info("Booking #{$bookingId} payment failed/expired via DOKU webhook.");
+            Log::info("DOKU Webhook: Booking #{$bookingId} gagal/expired.", [
+                'invoice_number' => $invoiceNumber,
+                'status'         => $transactionStatus,
+            ]);
+        } else {
+            Log::info("DOKU Webhook: Status tidak dikenal '{$transactionStatus}' untuk Booking #{$bookingId}.");
         }
 
         return response()->json(['status' => 'success']);

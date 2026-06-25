@@ -388,7 +388,7 @@
                 <div class="feature-card">
                     <div class="feature-icon-wrap"><i class="fa-solid fa-wallet"></i></div>
                     <h5 style="font-family:var(--font-display);font-weight:700;margin-bottom:10px;">Multi-Metode Pembayaran</h5>
-                    <p style="color:var(--text-muted);font-size:0.9rem;margin:0;line-height:1.7;">Bayar full atau DP 50% via DOKU (Transfer Bank, QRIS, dll) maupun Saldo Dompet Digital PadelBook.</p>
+                    <p style="color:var(--text-muted);font-size:0.9rem;margin:0;line-height:1.7;">Mendukung berbagai metode pembayaran via DOKU (Transfer Bank, QRIS, E-Wallet) maupun Transfer Manual.</p>
                 </div>
             </div>
             <div class="col-md-4 fade-up fade-up-delay-3">

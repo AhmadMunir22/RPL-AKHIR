@@ -569,10 +569,10 @@
                                         ? (selectedSlots.includes(item.slot) ? 'court-slot-available selected' : 'court-slot-available')
                                         : 'court-slot-booked'"
                                     @click="item.is_available && toggleSlot(item)"
-                                    :title="item.is_available ? ('Pilih ' + item.slot) : 'Sudah dipesan'"
+                                    :title="item.is_available ? ('Pilih ' + item.slot) : (item.is_blocked ? 'Pemeliharaan' : 'Sudah dipesan')"
                                 >
                                     <span class="court-slot-time" x-text="item.slot"></span>
-                                    <span class="court-slot-label" x-text="item.is_available ? 'Tersedia' : 'Dipesan'"></span>
+                                    <span class="court-slot-label" x-text="item.is_available ? 'Tersedia' : (item.is_blocked ? 'Pemeliharaan' : 'Dipesan')"></span>
                                 </div>
                             </template>
                         </div>
@@ -639,6 +639,7 @@
 <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
 <script>
     const COURT_ID = {{ $court->id }};
+    const COURT_STATUS = '{{ $court->status }}';
     const CAL_MONTH_DATES = @json($calMonthDates);
 
     function bookingWizard() {

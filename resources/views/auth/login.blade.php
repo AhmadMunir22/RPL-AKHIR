@@ -7,12 +7,12 @@
     <p style="color:var(--text-muted);font-size:0.9rem;">Masuk ke akun PadelBook Anda</p>
 </div>
 
-<form method="POST" action="{{ route('login') }}">
+<form method="POST" action="{{ route('login') }}" autocomplete="off">
     @csrf
     <div class="mb-3">
         <label class="form-label-sporty">Email</label>
         <input type="email" name="email" id="email" class="form-control form-control-sporty"
-               placeholder="nama@email.com" value="{{ old('email') }}" required autofocus>
+               placeholder="nama@email.com" value="{{ old('email') }}" required autofocus autocomplete="off">
     </div>
 
     <div class="mb-4" x-data="{ show: false }">
@@ -28,7 +28,7 @@
         <div class="position-relative">
             <input :type="show ? 'text' : 'password'" name="password" id="password"
                    class="form-control form-control-sporty pe-5"
-                   placeholder="Masukkan password" required>
+                   placeholder="Masukkan password" required autocomplete="new-password">
             <button type="button" class="btn border-0 p-0 position-absolute"
                     style="top:50%;right:14px;transform:translateY(-50%);color:var(--text-muted);background:transparent;"
                     @click="show = !show">

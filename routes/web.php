@@ -122,6 +122,9 @@ Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () 
 
     // Spatie Activity Log List
     Route::get('/logs', [AdminController::class, 'activityLogs'])->name('logs');
+
+    // Login IP Logs
+    Route::get('/login-logs', [AdminController::class, 'loginLogs'])->name('login-logs');
 });
 
 // Payment Webhooks (Outside auth middleware, handle their own security)

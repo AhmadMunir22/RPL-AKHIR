@@ -330,6 +330,15 @@ a { transition: var(--transition-fast); }
     background: rgba(17, 29, 58, 0.85) !important;
 }
 
+.form-control-sporty:-webkit-autofill,
+.form-control-sporty:-webkit-autofill:hover, 
+.form-control-sporty:-webkit-autofill:focus, 
+.form-control-sporty:-webkit-autofill:active {
+    -webkit-box-shadow: 0 0 0 30px #111d3a inset !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+    caret-color: var(--text-primary) !important;
+}
+
 .form-label-sporty {
     font-family: var(--font-display);
     font-weight: 600;

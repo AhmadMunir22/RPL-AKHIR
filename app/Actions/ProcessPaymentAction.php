@@ -42,7 +42,7 @@ class ProcessPaymentAction
             $booking->update([
                 'payment_status' => $paymentStatus,
                 'payment_method' => $gateway,
-                'status' => 'confirmed',
+                // Status sesi tidak diubah otomatis (tetap pending) agar admin bisa menyetujuinya secara manual
             ]);
 
             // Save Payment ledger
@@ -56,33 +56,30 @@ class ProcessPaymentAction
                 ]
             );
 
-            // Grant loyalty points: 1 point per booking
-            $pointsEarned = 1;
-            if ($pointsEarned > 0) {
-                $user = User::lockForUpdate()->find($booking->user_id);
-                $user->increment('points', $pointsEarned);
+            // Ensure court is loaded
+            $booking->loadMissing('court');
+            $slotsStr = is_array($booking->slots) ? implode(', ', $booking->slots) : '';
+            $dateStr = $booking->date ? $booking->date->format('d M Y') : '';
 
-                \App\Models\LoyaltyPoint::create([
-                    'user_id' => $user->id,
-                    'points' => $pointsEarned,
-                    'type' => 'earn',
-                    'description' => 'Booking Lapangan PadelBook #' . $booking->id
+            // Notify Admins
+            $admins = User::whereIn('role', ['super_admin', 'operator'])->get();
+            foreach ($admins as $admin) {
+                \App\Models\Notification::create([
+                    'user_id' => $admin->id,
+                    'type' => 'booking_status',
+                    'title' => 'Pembayaran Berhasil',
+                    'body' => "Pembayaran berhasil. Lap: {$booking->court->name}, Tanggal: {$dateStr}, Jam: {$slotsStr}.",
+                    'data' => [
+                        'booking_id' => $booking->id,
+                    ],
                 ]);
             }
 
-            // Trigger Otomatisasi Pengiriman Resi via WhatsApp (Simulasi / API Gateway)
-            app(\App\Services\WhatsAppService::class)->sendTicket($booking);
+            // Tiket WhatsApp/Email tidak dikirim otomatis di sini.
+            // Akan dikirim ketika admin mengubah status reservasi menjadi Confirmed / Completed.
 
             return $booking;
         });
-
-        // Send booking receipt (Email + WhatsApp) AFTER the transaction commits
-        try {
-            $booking->load(['user', 'court']);
-            $this->notificationService->sendBookingReceipt($booking);
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error("Failed to send booking receipt for Booking #{$booking->id}: " . $e->getMessage());
-        }
 
         return $booking;
     }

@@ -287,6 +287,28 @@ class AdminController extends Controller
         // If status changed to completed, send the receipt
         if ($request->status === 'completed' && $booking->status !== 'completed') {
             app(\App\Services\NotificationService::class)->sendBookingReceipt($booking);
+
+            // Grant loyalty points automatically after admin completes the transaction
+            $pointsEarned = 1;
+            $user = $booking->user;
+            if ($user) {
+                // Ensure points are only granted once per booking
+                $pointsGranted = \App\Models\LoyaltyPoint::where('booking_id', $booking->id)
+                    ->where('type', 'earn')
+                    ->exists();
+
+                if (!$pointsGranted) {
+                    $user->increment('points', $pointsEarned);
+
+                    \App\Models\LoyaltyPoint::create([
+                        'user_id' => $user->id,
+                        'booking_id' => $booking->id,
+                        'points' => $pointsEarned,
+                        'type' => 'earn',
+                        'description' => 'Sesi Selesai (Booking #' . $booking->id . ')'
+                    ]);
+                }
+            }
         }
 
         $booking->update(['status' => $request->status]);
@@ -413,6 +435,15 @@ class AdminController extends Controller
         }
 
         return view('admin.logs', compact('logs'));
+    }
+
+    public function loginLogs(Request $request)
+    {
+        $loginLogs = \App\Models\LoginLog::with('user')
+            ->orderBy('created_at', 'desc')
+            ->paginate(25);
+
+        return view('admin.login_logs', compact('loginLogs'));
     }
 
     // --- Reports and Exports ---

@@ -7,7 +7,7 @@
     <p style="color:var(--text-muted);font-size:0.9rem;">Bergabung dengan komunitas padel premium</p>
 </div>
 
-<form method="POST" action="{{ route('register') }}">
+<form method="POST" action="{{ route('register') }}" autocomplete="off">
     @csrf
     <div class="mb-3">
         <label class="form-label-sporty">Nama Lengkap</label>
@@ -18,7 +18,7 @@
     <div class="mb-3">
         <label class="form-label-sporty">Email</label>
         <input type="email" name="email" id="email" class="form-control form-control-sporty"
-               placeholder="nama@email.com" value="{{ old('email') }}" required>
+               placeholder="nama@email.com" value="{{ old('email') }}" required autocomplete="off">
     </div>
 
     <div class="mb-3">
@@ -33,8 +33,8 @@
                    pattern="(\+62|62|0)8[0-9]{8,12}"
                    title="Format: 08xxxxxxxxxx — OTP dikirim ke nomor ini">
         </div>
-        <small class="text-muted d-block mt-1" style="font-size:0.78rem;">
-            Kode OTP dikirim ke WhatsApp nomor ini. Gunakan nomor <strong>berbeda</strong> dari nomor device Fonnte (tidak bisa kirim ke nomor sendiri).
+        <small class="d-block mt-1" style="color:var(--text-muted);font-size:0.78rem;opacity:0.9;">
+            Kode OTP dikirim ke WhatsApp nomor ini.
         </small>
         @error('phone')
             <div class="text-danger small mt-1">{{ $message }}</div>
@@ -46,7 +46,7 @@
         <div class="position-relative">
             <input :type="show ? 'text' : 'password'" name="password" id="password"
                    class="form-control form-control-sporty pe-5"
-                   placeholder="Min. 8 karakter" required>
+                   placeholder="Min. 8 karakter" required autocomplete="new-password">
             <button type="button" class="btn border-0 p-0 position-absolute"
                     style="top:50%;right:14px;transform:translateY(-50%);color:var(--text-muted);background:transparent;"
                     @click="show = !show">
@@ -58,7 +58,7 @@
     <div class="mb-4">
         <label class="form-label-sporty">Konfirmasi Password</label>
         <input type="password" name="password_confirmation" class="form-control form-control-sporty"
-               placeholder="Ulangi password" required>
+               placeholder="Ulangi password" required autocomplete="new-password">
     </div>
 
     <button type="submit" id="btn-register" class="btn btn-sporty w-100 py-3 mb-3">

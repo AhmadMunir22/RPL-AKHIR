@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\LoginLog;
 use App\Models\User;
 use App\Support\PhoneHelper;
 use Illuminate\Http\Request;
@@ -76,6 +77,16 @@ class AuthController extends Controller
         if (in_array($user->role, ['admin', 'super_admin'])) {
             Auth::login($user, $request->boolean('remember'));
             $request->session()->regenerate();
+
+            // Catat log IP login admin
+            LoginLog::create([
+                'user_id'    => $user->id,
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'method'     => 'password',
+                'status'     => 'success',
+            ]);
+
             return redirect()->route('admin.index');
         }
 
@@ -162,6 +173,15 @@ class AuthController extends Controller
 
         Auth::login($user, $remember);
         $request->session()->regenerate();
+
+        // Catat log IP login user via OTP
+        LoginLog::create([
+            'user_id'    => $user->id,
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'method'     => 'otp',
+            'status'     => 'success',
+        ]);
 
         if ($user->isSuperAdmin() || $user->isOperator()) {
             return redirect('/admin')
@@ -509,40 +529,19 @@ class AuthController extends Controller
 
     public function redirectToGoogle()
     {
-        if (class_exists(\Laravel\Socialite\Facades\Socialite::class)) {
-            try {
-                return \Laravel\Socialite\Facades\Socialite::driver('google')->redirect();
-            } catch (\Exception $e) {
-                Log::warning('Socialite redirect failed: ' . $e->getMessage());
-            }
-        }
-
-        session(['mock_google_user' => [
-            'name'      => 'Demo Google User',
-            'email'     => 'demo-google@padelbook.com',
-            'phone'     => null,
-            'google_id' => Str::uuid(),
-        ]]);
-
-        return redirect()->action([self::class, 'handleGoogleCallback']);
+        return \Laravel\Socialite\Facades\Socialite::driver('google')
+            ->with(['prompt' => 'select_account'])
+            ->redirect();
     }
 
     public function handleGoogleCallback()
     {
-        $googleUser = null;
-
-        if (class_exists(\Laravel\Socialite\Facades\Socialite::class) && !session()->has('mock_google_user')) {
-            try {
-                $googleUser = \Laravel\Socialite\Facades\Socialite::driver('google')->user();
-            } catch (\Exception $e) {
-                Log::error('Socialite callback error: ' . $e->getMessage());
-            }
-        }
-
-        if (!$googleUser) {
-            $raw        = session('mock_google_user', []);
-            $googleUser = (object) $raw;
-            session()->forget('mock_google_user');
+        try {
+            $googleUser = \Laravel\Socialite\Facades\Socialite::driver('google')->user();
+        } catch (\Exception $e) {
+            Log::error('Socialite callback error: ' . $e->getMessage());
+            return redirect()->route('login')
+                ->withErrors(['email' => 'Gagal login via Google. Silakan coba lagi.']);
         }
 
         if (empty($googleUser->email)) {
@@ -564,6 +563,15 @@ class AuthController extends Controller
         );
 
         Auth::login($user);
+
+        // Catat log IP login via Google
+        LoginLog::create([
+            'user_id'    => $user->id,
+            'ip_address' => request()->ip(),
+            'user_agent' => request()->userAgent(),
+            'method'     => 'google',
+            'status'     => 'success',
+        ]);
 
         return redirect()->route('dashboard.index')
             ->with('success', 'Berhasil masuk menggunakan akun Google!');

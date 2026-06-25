@@ -49,6 +49,11 @@ class CreateBookingAction
         // yang berjalan paralel tidak dapat data stale dari cache
         $this->bookingService->clearAvailabilityCache($courtId, $date);
 
+        $court = \App\Models\Court::findOrFail($courtId);
+        if ($court->status !== 'active') {
+            throw new \RuntimeException("Lapangan ini sedang dalam pemeliharaan dan tidak dapat dipesan.");
+        }
+
         return DB::transaction(function () use ($userId, $courtId, $date, $slots, $voucherCode, $notes) {
 
             // ------------------------------------------------------------------
