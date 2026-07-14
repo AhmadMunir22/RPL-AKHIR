@@ -122,12 +122,12 @@
     cursor: not-allowed;
 }
 
-@keyframes pulse-whatsapp {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); transform: scale(1); }
-    50% { box-shadow: 0 0 20px rgba(74, 222, 128, 0.2); transform: scale(1.05); }
+@keyframes pulse-email {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); transform: scale(1); }
+    50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.2); transform: scale(1.05); }
 }
-.wa-icon-glow {
-    animation: pulse-whatsapp 3s infinite ease-in-out;
+.email-icon-glow {
+    animation: pulse-email 3s infinite ease-in-out;
 }
 
 /* Suppress redundant global layout errors */
@@ -138,24 +138,22 @@
 
 {{-- Icon + Heading --}}
 <div class="text-center mb-4">
-    <div class="wa-icon-glow" style="display:inline-flex;align-items:center;justify-content:center;
+    <div class="email-icon-glow" style="display:inline-flex;align-items:center;justify-content:center;
         width:68px;height:68px;border-radius:50%;margin-bottom:16px;
-        background:linear-gradient(135deg,rgba(74,222,128,0.18),rgba(74,222,128,0.05));
-        border:2px solid rgba(74,222,128,0.4);">
-        <i class="fa-brands fa-whatsapp" style="font-size:2rem;color:#4ade80;"></i>
+        background:linear-gradient(135deg,rgba(59,130,246,0.18),rgba(59,130,246,0.05));
+        border:2px solid rgba(59,130,246,0.4);">
+        <i class="fa-solid fa-envelope-open-text" style="font-size:1.8rem;color:#3b82f6;"></i>
     </div>
     <h2 style="font-family:var(--font-display);font-size:1.55rem;font-weight:800;color:var(--text-primary);margin-bottom:8px;letter-spacing:-0.01em;">
         Verifikasi OTP
     </h2>
     <p style="color:var(--text-secondary);font-size:0.88rem;line-height:1.55;margin:0;max-width:320px;margin-left:auto;margin-right:auto;">
-        Kode OTP telah dikirim ke nomor WhatsApp:<br>
-        <strong style="color:#4ade80;font-weight:700;">
-            @if(isset($user) && $user->phone)
-                {{ \App\Support\PhoneHelper::display($user->phone) }}
-            @elseif(isset($user))
-                {{ substr($user->email, 0, 3) }}***@{{ explode('@', $user->email)[1] }}
+        Kode OTP telah dikirim ke Email:<br>
+        <strong style="color:#3b82f6;font-weight:700;">
+            @if(isset($user))
+                {{ substr($user->email, 0, 3) . '***@' . explode('@', $user->email)[1] }}
             @else
-                WhatsApp terdaftar Anda
+                Email terdaftar Anda
             @endif
         </strong>
     </p>
@@ -169,11 +167,11 @@
     </div>
     
     <!-- Step 1 completed -->
-    <div class="step-item completed">
-        <div class="step-circle">
+    <div class="step-item completed" style="--text-muted:#3b82f6;">
+        <div class="step-circle" style="background:rgba(59,130,246,0.15);color:#3b82f6;border-color:rgba(59,130,246,0.4);">
             <i class="fa-solid fa-check" style="font-size:0.8rem;"></i>
         </div>
-        <span class="step-label">No. WA</span>
+        <span class="step-label" style="color:#3b82f6;">Email</span>
     </div>
     
     <!-- Step 2 active -->
@@ -191,9 +189,9 @@
 
 {{-- Flash info --}}
 @if(session('info'))
-<div style="margin-bottom:20px;padding:12px 16px;background:rgba(74,222,128,0.06);border:1px solid rgba(74,222,128,0.2);border-radius:12px;display:flex;align-items:center;gap:10px;">
-    <i class="fa-brands fa-whatsapp" style="color:#4ade80;font-size:1.1rem;flex-shrink:0;"></i>
-    <span style="font-size:0.82rem;color:#86efac;font-weight:500;">{{ session('info') }}</span>
+<div style="margin-bottom:20px;padding:12px 16px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:12px;display:flex;align-items:center;gap:10px;">
+    <i class="fa-solid fa-envelope" style="color:#60a5fa;font-size:1.1rem;flex-shrink:0;"></i>
+    <span style="font-size:0.82rem;color:#93c5fd;font-weight:500;">{{ session('info') }}</span>
 </div>
 @endif
 
@@ -290,7 +288,7 @@
 
     let rcd = 60;
     (function resendTick() {
-        resendTxt.textContent = rcd>0 ? `Kirim Ulang (${rcd}s)` : 'Kirim Ulang ke WhatsApp';
+        resendTxt.textContent = rcd>0 ? `Kirim Ulang (${rcd}s)` : 'Kirim Ulang ke Email';
         resend.disabled = rcd>0;
         resend.style.opacity = rcd>0?'0.5':'1';
         if(rcd>0){rcd--;setTimeout(resendTick,1000);}

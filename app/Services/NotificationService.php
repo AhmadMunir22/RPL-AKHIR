@@ -9,14 +9,28 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
+/**
+ * Class NotificationService
+ * 
+ * Bertanggung jawab mengirimkan notifikasi multi-channel (WhatsApp & Email).
+ * Digunakan untuk mengirimkan e-tiket/kwitansi reservasi sukses kepada member,
+ * notifikasi internal, serta kode OTP verifikasi 2FA lewat Kata AI API gateway.
+ * 
+ * @package App\Services
+ */
 class NotificationService
 {
     /**
-     * Send booking receipt details via Email and WhatsApp.
+     * Mengirimkan Tanda Terima/Kwitansi Reservasi Sukses (Email & WhatsApp).
+     * 
+     * Mencegah duplikasi pengiriman kwitansi dengan memeriksa riwayat notifikasi.
+     * 
+     * @param Booking $booking Record Booking terkait
+     * @return void
      */
     public function sendBookingReceipt(Booking $booking): void
     {
-        // Prevent duplicate sending of the receipt
+        // 1. Cegah duplikasi: Pastikan tiket untuk booking_id ini belum pernah dikirimkan
         $alreadySent = Notification::where('user_id', $booking->user_id)
             ->where('type', 'booking_status')
             ->get()
@@ -30,9 +44,10 @@ class NotificationService
         }
 
         $slotsList = implode(', ', $booking->slots);
-        $dateStr = $booking->date->format('d M Y');
+        $dateStr   = $booking->date->format('d M Y');
         $ticketUrl = route('dashboard.bookings.ticket', $booking->id);
 
+        // Susun teks pesan tiket digital
         $message = "Halo {$booking->user->name},\n\n"
                  . "Reservasi Anda di PadelBook berhasil dikonfirmasi! 🎾\n\n"
                  . "=== RINCIAN TIKET ===\n"
@@ -46,18 +61,19 @@ class NotificationService
                  . "Tunjukkan tiket digital Anda di resepsionis saat kedatangan untuk scan QR Code.\n\n"
                  . "Selamat berolahraga! 💪";
 
+        // 2. Simpan record log notifikasi ke database
         Notification::create([
             'user_id' => $booking->user_id,
-            'type' => 'booking_status',
-            'title' => 'Reservasi PadelBook Berhasil!',
-            'body' => "Reservasi lapangan {$booking->court->name} pada tanggal {$dateStr} jam {$slotsList} berhasil dikonfirmasi.",
-            'data' => [
+            'type'    => 'booking_status',
+            'title'   => 'Reservasi PadelBook Berhasil!',
+            'body'    => "Reservasi lapangan {$booking->court->name} pada tanggal {$dateStr} jam {$slotsList} berhasil dikonfirmasi.",
+            'data'    => [
                 'booking_id' => $booking->id,
-                'qr_code' => $booking->qr_code,
+                'qr_code'    => $booking->qr_code,
             ],
         ]);
 
-        // Send Email
+        // 3. Kirim via Email
         try {
             Mail::raw($message, function ($mail) use ($booking) {
                 $mail->to($booking->user->email)
@@ -68,21 +84,25 @@ class NotificationService
             Log::error("Email confirmation failed for Booking #{$booking->id}: " . $e->getMessage());
         }
 
-        // Send WhatsApp if phone number is registered
-        if (!empty($booking->user->phone)) {
-            $this->sendWhatsAppBookingReceipt($booking->user->phone, $booking);
-        }
+        // 4. Kirim via WhatsApp (Dinonaktifkan sesuai permintaan)
+        // if (!empty($booking->user->phone)) {
+        //     $this->sendWhatsAppBookingReceipt($booking->user->phone, $booking);
+        // }
     }
 
     /**
-     * Send booking receipt details via WhatsApp (Fonnte).
-     *
+     * Mengirimkan Tanda Terima/Tiket Sukses via WhatsApp (Kata AI API).
+     * 
+     * @param string $phone Nomor WhatsApp tujuan
+     * @param Booking $booking Record Booking terkait
      * @return array{ok: bool, error: ?string}
      */
     public function sendWhatsAppBookingReceipt(string $phone, Booking $booking): array
     {
-        $token = $this->fonnteToken();
-        $target = PhoneHelper::fonnteTarget($phone);
+        return ['ok' => true, 'error' => null]; // Dinonaktifkan total sesuai permintaan
+
+        $token        = $this->kataAiToken();
+        $target       = PhoneHelper::kataAiTarget($phone);
         $displayPhone = PhoneHelper::display($phone);
 
         if ($target === '' || strlen($target) < 11) {
@@ -90,9 +110,10 @@ class NotificationService
         }
 
         $slotsList = implode(', ', $booking->slots);
-        $dateStr = $booking->date->format('d M Y');
+        $dateStr   = $booking->date->format('d M Y');
         $ticketUrl = route('dashboard.bookings.ticket', $booking->id);
 
+        // Susun teks pesan WhatsApp (dengan formatting bold markdown WA)
         $message = "🎾 *PadelBook - KONFIRMASI RESERVASI* 🎾\n\n"
                  . "Halo *{$booking->user->name}*,\n"
                  . "Reservasi Anda di PadelBook berhasil dikonfirmasi!\n\n"
@@ -107,84 +128,94 @@ class NotificationService
                  . "Tunjukkan pesan/tiket digital ini di resepsionis saat kedatangan untuk scan QR Code.\n\n"
                  . "Selamat berolahraga! 💪";
 
+        // Jika token Kata AI belum dikonfigurasi di environment (.env)
         if (empty($token)) {
-            Log::warning("Fonnte tidak dikonfigurasi. WhatsApp Receipt → WA {$displayPhone}");
+            Log::warning("Kata AI tidak dikonfigurasi. WhatsApp Receipt -> WA {$displayPhone}");
             if (app()->environment('local', 'testing')) {
                 Log::info("DEV WA Receipt untuk {$displayPhone}: \n{$message}");
                 return ['ok' => true, 'error' => null];
             }
-            return ['ok' => false, 'error' => 'Layanan WhatsApp belum dikonfigurasi (FONNTE_TOKEN).'];
+            return ['ok' => false, 'error' => 'Layanan WhatsApp belum dikonfigurasi (KATA_AI_TOKEN).'];
         }
 
+        // Tembak API endpoint Kata AI
         try {
             $response = Http::withHeaders(['Authorization' => $token])
                 ->asForm()
                 ->timeout(30)
-                ->post('https://api.fonnte.com/send', [
-                    'target' => $target,
+                ->post('https://api.kata.ai/v1/send', [
+                    'target'  => $target,
                     'message' => $message,
                 ]);
 
             $body = $response->json() ?? [];
-            Log::info('Fonnte Booking Receipt WA', [
-                'to' => $displayPhone,
-                'target' => $target,
+            Log::info('Kata AI Booking Receipt WA', [
+                'to'       => $displayPhone,
+                'target'   => $target,
                 'response' => $response->body(),
             ]);
 
-            if ($this->fonnteResponseOk($response, $body)) {
+            if ($this->kataAiResponseOk($response, $body)) {
                 return ['ok' => true, 'error' => null];
             }
 
             $reason = $body['reason'] ?? $body['detail'] ?? $response->body();
-            return ['ok' => false, 'error' => $this->humanizeFonnteError((string) $reason)];
+            return ['ok' => false, 'error' => $this->humanizeKataAiError((string) $reason)];
         } catch (\Exception $e) {
-            Log::error("Fonnte exception on receipt WA: {$e->getMessage()}");
+            Log::error("Kata AI exception on receipt WA: {$e->getMessage()}");
             return ['ok' => false, 'error' => 'Gagal menghubungi server WhatsApp. Coba lagi.'];
         }
     }
 
     /**
-     * Send OTP via WhatsApp (Fonnte).
-     *
+     * Mengirimkan Kode OTP via WhatsApp (Kata AI API).
+     * 
+     * @param string $phone Nomor tujuan
+     * @param string $otpCode Kode OTP
+     * @param string $purpose Deskripsi tujuan verifikasi
      * @return array{ok: bool, error: ?string}
      */
     public function sendWhatsAppOtp(string $phone, string $otpCode, string $purpose): array
     {
-        $token = $this->fonnteToken();
-        $target = PhoneHelper::fonnteTarget($phone);
+        return ['ok' => true, 'error' => null]; // Dinonaktifkan total sesuai permintaan
+
+        $token        = $this->kataAiToken();
+        $target       = PhoneHelper::kataAiTarget($phone);
         $displayPhone = PhoneHelper::display($phone);
 
         if ($target === '' || strlen($target) < 11) {
             return ['ok' => false, 'error' => 'Nomor WhatsApp tidak valid.'];
         }
 
+        // Jalankan simulasi lokal jika token Kata AI tidak diatur
         if (empty($token)) {
-            Log::warning("Fonnte tidak dikonfigurasi. OTP {$otpCode} → WA {$displayPhone}");
+            Log::warning("Kata AI tidak dikonfigurasi. OTP {$otpCode} -> WA {$displayPhone}");
             if (app()->environment('local', 'testing')) {
                 Log::info("DEV OTP untuk {$displayPhone}: {$otpCode}");
                 return ['ok' => true, 'error' => null];
             }
-            return ['ok' => false, 'error' => 'Layanan WhatsApp belum dikonfigurasi (FONNTE_TOKEN).'];
+            return ['ok' => false, 'error' => 'Layanan WhatsApp belum dikonfigurasi (KATA_AI_TOKEN).'];
         }
 
-        $device = $this->getFonnteDevice();
+        // Periksa status kelayakan device WA Kata AI sebelum menembak API
+        $device = $this->getKataAiDevice();
         if ($device === null) {
-            return ['ok' => false, 'error' => 'Tidak dapat terhubung ke Fonnte. Periksa token API.'];
+            return ['ok' => false, 'error' => 'Tidak dapat terhubung ke Kata AI. Periksa token API.'];
         }
 
         if (($device['device_status'] ?? '') !== 'connect') {
             return [
-                'ok' => false,
-                'error' => 'Device WhatsApp Fonnte belum terhubung. Buka dashboard Fonnte → scan QR WhatsApp.',
+                'ok'    => false,
+                'error' => 'Device WhatsApp Kata AI belum terhubung. Buka dashboard Kata AI -> scan QR WhatsApp.',
             ];
         }
 
+        // Keamanan Kata AI: Cegah pengiriman SMS/WA ke nomor device pengirim sendiri
         $deviceNumber = (string) ($device['device'] ?? '');
         if ($deviceNumber !== '' && PhoneHelper::digitsMatch($target, $deviceNumber)) {
             return [
-                'ok' => false,
-                'error' => 'Nomor pendaftaran sama dengan nomor device Fonnte. WhatsApp tidak bisa mengirim ke nomor sendiri — daftar dengan nomor WA lain.',
+                'ok'    => false,
+                'error' => 'Nomor pendaftaran sama dengan nomor device Kata AI. WhatsApp tidak bisa mengirim ke nomor sendiri — daftar dengan nomor WA lain.',
             ];
         }
 
@@ -198,41 +229,48 @@ class NotificationService
             $response = Http::withHeaders(['Authorization' => $token])
                 ->asForm()
                 ->timeout(30)
-                ->post('https://api.fonnte.com/send', [
-                    'target' => $target,
+                ->post('https://api.kata.ai/v1/send', [
+                    'target'  => $target,
                     'message' => $message,
                 ]);
 
             $body = $response->json() ?? [];
-            Log::info('Fonnte OTP', [
-                'to' => $displayPhone,
-                'target' => $target,
+            Log::info('Kata AI OTP', [
+                'to'       => $displayPhone,
+                'target'   => $target,
                 'response' => $response->body(),
             ]);
 
-            if ($this->fonnteResponseOk($response, $body)) {
+            if ($this->kataAiResponseOk($response, $body)) {
                 return ['ok' => true, 'error' => null];
             }
 
             $reason = $body['reason'] ?? $body['detail'] ?? $response->body();
-            return ['ok' => false, 'error' => $this->humanizeFonnteError((string) $reason)];
+            return ['ok' => false, 'error' => $this->humanizeKataAiError((string) $reason)];
         } catch (\Exception $e) {
-            Log::error("Fonnte exception: {$e->getMessage()}");
+            Log::error("Kata AI exception: {$e->getMessage()}");
             return ['ok' => false, 'error' => 'Gagal menghubungi server WhatsApp. Coba lagi.'];
         }
     }
 
-    private function fonnteToken(): string
+    /**
+     * Membaca Kata AI Token API dari berkas konfigurasi.
+     * 
+     * @return string
+     */
+    private function kataAiToken(): string
     {
-        return trim((string) config('services.fonnte.token'), " \t\n\r\"'");
+        return trim((string) config('services.kata_ai.token'), " \t\n\r\"'");
     }
 
     /**
+     * Mengambil detail status device WhatsApp dari server Kata AI.
+     * 
      * @return array<string, mixed>|null
      */
-    private function getFonnteDevice(): ?array
+    private function getKataAiDevice(): ?array
     {
-        $token = $this->fonnteToken();
+        $token = $this->kataAiToken();
         if ($token === '') {
             return null;
         }
@@ -241,7 +279,7 @@ class NotificationService
             $response = Http::withHeaders(['Authorization' => $token])
                 ->asForm()
                 ->timeout(15)
-                ->post('https://api.fonnte.com/device');
+                ->post('https://api.kata.ai/v1/device');
 
             if (!$response->successful()) {
                 return null;
@@ -250,12 +288,19 @@ class NotificationService
             $body = $response->json();
             return is_array($body) ? $body : null;
         } catch (\Exception $e) {
-            Log::error('Fonnte device check failed: ' . $e->getMessage());
+            Log::error('Kata AI device check failed: ' . $e->getMessage());
             return null;
         }
     }
 
-    private function fonnteResponseOk(\Illuminate\Http\Client\Response $response, array $body): bool
+    /**
+     * Memeriksa apakah respon dari gateway Kata AI menunjukkan status sukses.
+     * 
+     * @param \Illuminate\Http\Client\Response $response
+     * @param array $body
+     * @return bool
+     */
+    private function kataAiResponseOk(\Illuminate\Http\Client\Response $response, array $body): bool
     {
         if (!$response->successful()) {
             return false;
@@ -273,17 +318,24 @@ class NotificationService
         return true;
     }
 
-    private function humanizeFonnteError(string $reason): string
+    /**
+     * Menghasilkan teks error yang ramah dibaca pengguna berdasarkan kode error Kata AI.
+     * 
+     * @param string $reason
+     * @return string
+     */
+    private function humanizeKataAiError(string $reason): string
     {
         $lower = strtolower($reason);
 
         if (str_contains($lower, 'invalid token')) {
-            return 'Token Fonnte tidak valid. Perbarui FONNTE_TOKEN di file .env.';
+            return 'Token Kata AI tidak valid. Perbarui KATA_AI_TOKEN di file .env.';
         }
         if (str_contains($lower, 'disconnected')) {
-            return 'WhatsApp Fonnte terputus. Buka fonnte.com → Device → scan QR lagi.';
+            return 'WhatsApp Kata AI terputus. Buka dashboard Kata AI -> Device -> scan QR lagi.';
         }
 
         return 'WhatsApp: ' . $reason;
     }
 }
+

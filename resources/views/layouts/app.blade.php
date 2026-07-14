@@ -138,13 +138,22 @@
     </nav>
 
     <!-- ═══════════════ FLASH MESSAGES ═══════════════ -->
-    @if(session('success') || session('error') || $errors->any())
+    @if(session('success') || session('error') || session('warning') || $errors->any())
     <div class="container mt-3" style="max-width:900px;">
         @if(session('success'))
         <div class="alert-sporty alert-sporty-success mb-3 fade-up" role="alert">
             <i class="fa-solid fa-circle-check" style="color:#4ade80;font-size:1.1rem;"></i>
             <div>{{ session('success') }}</div>
             <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="alert"></button>
+        </div>
+        @endif
+        @if(session('warning'))
+        <div class="alert-sporty mb-3 fade-up" style="background-color:rgba(234,179,8,0.1);border-left:4px solid #eab308;color:var(--text-primary);" role="alert">
+            <div class="d-flex align-items-center">
+                <i class="fa-solid fa-triangle-exclamation me-3" style="color:#eab308;font-size:1.1rem;"></i>
+                <div>{{ session('warning') }}</div>
+                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="alert"></button>
+            </div>
         </div>
         @endif
         @if(session('error'))

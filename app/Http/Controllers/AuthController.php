@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\LoginLog;
 use App\Models\User;
 use App\Support\PhoneHelper;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -12,17 +14,45 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\RedirectResponse as SymfonyRedirectResponse;
 
+/**
+ * Class AuthController
+ * 
+ * Menangani seluruh alur autentikasi dan pendaftaran pengguna sistem PadelBook.
+ * Mendukung autentikasi berbasis password + OTP WhatsApp, registrasi mandiri
+ * dengan verifikasi OTP WA, sistem reset password, integrasi masuk via Google (OAuth2),
+ * serta penerbitan token berbasis Sanctum untuk client API external.
+ * 
+ * @package App\Http\Controllers
+ */
 class AuthController extends Controller
 {
-    /** @return array{ok: bool, error: ?string} */
+    /**
+     * Helper: Mengirim OTP via WhatsApp Kata AI Service.
+     * 
+     * @param string $phone Nomor tujuan
+     * @param string $otpCode Kode OTP
+     * @param string $purpose Deskripsi tujuan
+     * @return array{ok: bool, error: ?string}
+     */
     private function sendWaOtp(string $phone, string $otpCode, string $purpose): array
     {
         return app(\App\Services\NotificationService::class)->sendWhatsAppOtp($phone, $otpCode, $purpose);
     }
 
-    // ── Helper: send OTP email (HTML template) ──────────────────────────────
-
+    /**
+     * Helper: Mengirim OTP via Email (Template HTML).
+     * 
+     * @param string $toEmail Email tujuan
+     * @param string $toName Nama tujuan
+     * @param string $otpCode Kode OTP
+     * @param string $subject Judul email
+     * @param string $purposeText Deskripsi tujuan
+     * @param int $expiryMinutes Batas kedaluwarsa OTP dalam menit
+     * @return void
+     */
     private function sendOtpEmail(
         string $toEmail,
         string $toName,
@@ -32,12 +62,12 @@ class AuthController extends Controller
         int    $expiryMinutes = 5
     ): void {
         $data = [
-            'subject'        => $subject,
-            'userName'       => $toName,
-            'otpCode'        => $otpCode,
-            'purposeText'    => $purposeText,
-            'expiryMinutes'  => $expiryMinutes,
-            'appUrl'         => config('app.url'),
+            'subject'       => $subject,
+            'userName'      => $toName,
+            'otpCode'       => $otpCode,
+            'purposeText'   => $purposeText,
+            'expiryMinutes' => $expiryMinutes,
+            'appUrl'        => config('app.url'),
         ];
 
         try {
@@ -53,13 +83,28 @@ class AuthController extends Controller
 
     // ── Web Authentication ──────────────────────────────────────────────────
 
-    public function showLogin()
+    /**
+     * Menampilkan Halaman Login Web.
+     * 
+     * @return View
+     */
+    public function showLogin(): View
     {
         return view('auth.login');
     }
 
-    public function login(Request $request)
+    /**
+     * Memproses Kredensial Login Pengguna.
+     * 
+     * Jika admin/super_admin, langsung diarahkan masuk.
+     * Jika member/pengguna biasa, kirim kode OTP ke WhatsApp untuk verifikasi tahap dua.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function login(Request $request): RedirectResponse
     {
+        // 1. Validasi input email & password
         $request->validate([
             'email'    => 'required|email',
             'password' => 'required|string',
@@ -67,13 +112,14 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->email)->first();
 
+        // 2. Periksa kecocokan kredensial password
         if (!$user || !Hash::check($request->password, $user->password)) {
             return back()->withErrors([
                 'email' => 'Email atau password yang Anda masukkan salah.',
             ])->onlyInput('email');
         }
 
-        // Admin langsung login tanpa OTP
+        // 3. Admin & Super Admin Bypass OTP: langsung login demi efisiensi operasional
         if (in_array($user->role, ['admin', 'super_admin'])) {
             Auth::login($user, $request->boolean('remember'));
             $request->session()->regenerate();
@@ -90,7 +136,7 @@ class AuthController extends Controller
             return redirect()->route('admin.index');
         }
 
-        // Kirim OTP ke WA pengguna setelah credentials valid
+        // 4. Inisialisasi Sesi OTP Dua Faktor (2FA) untuk Member
         $otpCode = rand(100000, 999999);
         session([
             'login_user_id'      => $user->id,
@@ -100,32 +146,26 @@ class AuthController extends Controller
             'login_otp_attempts' => 0,
         ]);
 
-        if ($user->phone) {
-            $wa = $this->sendWaOtp($user->phone, $otpCode, 'Verifikasi Login Akun PadelBook');
-            if (!$wa['ok']) {
-                return back()->withErrors([
-                    'email' => $wa['error'] ?? 'Gagal mengirim OTP ke WhatsApp.',
-                ])->onlyInput('email');
-            }
-            $message = 'Kode OTP telah dikirim ke WhatsApp ' . PhoneHelper::display($user->phone);
-        } else {
-            // Fallback for old users without phone number
-            $this->sendOtpEmail(
-                $user->email,
-                $user->name,
-                $otpCode,
-                'Kode OTP Login',
-                'Anda menerima email ini karena ada percobaan login pada akun PadelBook Anda. Masukkan kode OTP berikut untuk melanjutkan:',
-                5
-            );
-            $message = "Kode OTP telah dikirim ke Email {$user->email} (Harap lengkapi nomor WA Anda nanti)";
-        }
+        // 5. Kirim OTP ke Email
+        $this->sendOtpEmail(
+            $user->email,
+            $user->name,
+            $otpCode,
+            'Kode OTP Login',
+            'Anda menerima email ini karena ada percobaan login pada akun PadelBook Anda. Masukkan kode OTP berikut untuk melanjutkan:',
+            5
+        );
+        $message = "Kode OTP telah dikirim ke Email {$user->email}";
 
-        return redirect()->route('login.otp.verify')
-            ->with('info', $message);
+        return redirect()->route('login.otp.verify')->with('info', $message);
     }
 
-    public function showVerifyLoginOtp()
+    /**
+     * Menampilkan Halaman Pengisian OTP Login 2FA.
+     * 
+     * @return RedirectResponse|View
+     */
+    public function showVerifyLoginOtp(): RedirectResponse|View
     {
         if (!session()->has('login_user_id')) {
             return redirect()->route('login');
@@ -134,7 +174,13 @@ class AuthController extends Controller
         return view('auth.verify-login-otp', compact('user'));
     }
 
-    public function verifyLoginOtp(Request $request)
+    /**
+     * Memverifikasi Kode OTP Login 2FA Pengguna.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function verifyLoginOtp(Request $request): RedirectResponse
     {
         $request->validate(['otp' => 'required|string|size:6']);
 
@@ -144,21 +190,21 @@ class AuthController extends Controller
         $remember   = session('login_remember', false);
         $attempts   = session('login_otp_attempts', 0);
 
-        // Sesi tidak ada atau kedaluwarsa
+        // 1. Cek validitas sesi OTP
         if (!$userId || !$sessionOtp || now()->gt($expiry)) {
             session()->forget(['login_user_id', 'login_otp_code', 'login_otp_expires', 'login_remember', 'login_otp_attempts']);
             return redirect()->route('login')
                 ->withErrors(['email' => 'Sesi OTP kedaluwarsa. Silakan login ulang.']);
         }
 
-        // Batasi maksimal 5 percobaan
+        // 2. Batasi maksimum 5 kali salah input kode OTP untuk mencegah brute force
         if ($attempts >= 5) {
             session()->forget(['login_user_id', 'login_otp_code', 'login_otp_expires', 'login_remember', 'login_otp_attempts']);
             return redirect()->route('login')
                 ->withErrors(['email' => 'Terlalu banyak percobaan OTP yang salah. Silakan login ulang.']);
         }
 
-        // Cek kode OTP
+        // 3. Verifikasi kesesuaian kode OTP
         if ($request->otp !== (string) $sessionOtp) {
             session(['login_otp_attempts' => $attempts + 1]);
             $remaining = 5 - ($attempts + 1);
@@ -167,14 +213,14 @@ class AuthController extends Controller
             ]);
         }
 
-        // OTP benar — login
+        // 4. OTP Benar, bersihkan sesi OTP dan lakukan login
         $user = User::findOrFail($userId);
         session()->forget(['login_user_id', 'login_otp_code', 'login_otp_expires', 'login_remember', 'login_otp_attempts']);
 
         Auth::login($user, $remember);
         $request->session()->regenerate();
 
-        // Catat log IP login user via OTP
+        // 5. Catat log IP login user via OTP
         LoginLog::create([
             'user_id'    => $user->id,
             'ip_address' => $request->ip(),
@@ -188,11 +234,16 @@ class AuthController extends Controller
                 ->with('success', 'Verifikasi OTP berhasil! Selamat datang, ' . $user->name . '!');
         }
 
-        return redirect('/dashboard')
+        return redirect()->intended('/')
             ->with('success', 'Verifikasi OTP berhasil! Selamat datang kembali, ' . $user->name . '!');
     }
 
-    public function resendLoginOtp()
+    /**
+     * Mengirim Ulang Kode OTP Login.
+     * 
+     * @return RedirectResponse
+     */
+    public function resendLoginOtp(): RedirectResponse
     {
         $userId = session('login_user_id');
         if (!$userId) {
@@ -201,54 +252,65 @@ class AuthController extends Controller
 
         $user    = User::findOrFail($userId);
         $otpCode = rand(100000, 999999);
+        
+        // Reset waktu kedaluwarsa & jumlah hitungan salah
         session([
             'login_otp_code'     => $otpCode,
             'login_otp_expires'  => now()->addMinutes(5),
             'login_otp_attempts' => 0,
         ]);
 
-        if ($user->phone) {
-            $wa = $this->sendWaOtp($user->phone, $otpCode, 'Kirim Ulang OTP Login Akun PadelBook');
-            if (!$wa['ok']) {
-                return back()->withErrors(['otp' => $wa['error'] ?? 'Gagal mengirim ulang OTP.']);
-            }
-            $message = 'Kode OTP baru telah dikirim ke WhatsApp ' . PhoneHelper::display($user->phone);
-        } else {
-            $this->sendOtpEmail(
-                $user->email,
-                $user->name,
-                $otpCode,
-                'Kode OTP Login (Baru)',
-                'Anda meminta kode OTP baru untuk login ke akun PadelBook Anda:',
-                5
-            );
-            $message = "Kode OTP baru telah dikirim ke Email {$user->email}";
-        }
+        $this->sendOtpEmail(
+            $user->email,
+            $user->name,
+            $otpCode,
+            'Kode OTP Login (Baru)',
+            'Anda meminta kode OTP baru untuk login ke akun PadelBook Anda:',
+            5
+        );
+        $message = "Kode OTP baru telah dikirim ke Email {$user->email}";
 
         return back()->with('info', $message);
     }
 
     // ── Register ────────────────────────────────────────────────────────────
 
-    public function showRegister()
+    /**
+     * Menampilkan Form Registrasi Member Baru.
+     * 
+     * @return View
+     */
+    public function showRegister(): View
     {
         return view('auth.register');
     }
 
-    public function register(Request $request)
+    /**
+     * Memproses Registrasi Member Baru.
+     * 
+     * Memvalidasi input pendaftaran, menaruh data sementara di session,
+     * serta memicu pengiriman OTP verifikasi via Email.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function register(Request $request): RedirectResponse
     {
+        // 1. Validasi format data pendaftaran
         $request->validate([
             'name'     => 'required|string|max:255',
             'email'    => 'required|string|email|max:255|unique:users',
             'phone'    => ['required', 'string', 'max:20', 'regex:/^(\+?62|0)8[0-9]{8,12}$/'],
             'password' => 'required|string|min:8|confirmed',
         ], [
-            'phone.regex' => 'Nomor WhatsApp tidak valid. Gunakan format 08xxxxxxxxxx.',
+            'phone.regex'     => 'Nomor telepon tidak valid. Gunakan format 08xxxxxxxxxx.',
+            'phone.required'  => 'Nomor telepon / WA wajib diisi.',
         ]);
 
         $phone = PhoneHelper::normalize($request->phone);
         $otpCode = (string) random_int(100000, 999999);
 
+        // 2. Simpan data registrasi sementara ke session untuk menanti verifikasi via Email
         session([
             'temp_user' => [
                 'name'     => $request->name,
@@ -261,20 +323,26 @@ class AuthController extends Controller
             'otp_attempts'    => 0,
         ]);
 
-        $wa = $this->sendWaOtp($phone, $otpCode, 'Verifikasi Pendaftaran Akun PadelBook');
-
-        if (!$wa['ok']) {
-            session()->forget(['temp_user', 'otp_code', 'otp_expires_at', 'otp_attempts']);
-            return back()
-                ->withInput($request->except('password', 'password_confirmation'))
-                ->withErrors(['phone' => $wa['error'] ?? 'Gagal mengirim OTP ke WhatsApp.']);
-        }
+        // 3. Kirim kode OTP pendaftaran via Email
+        $this->sendOtpEmail(
+            $request->email,
+            $request->name,
+            $otpCode,
+            'Verifikasi Pendaftaran',
+            'Kode OTP ini digunakan untuk memverifikasi pendaftaran akun PadelBook Anda:',
+            5
+        );
 
         return redirect()->route('otp.verify')
-            ->with('info', 'Kode OTP telah dikirim ke WhatsApp ' . PhoneHelper::display($phone));
+            ->with('info', 'Kode OTP telah dikirim ke Email ' . $request->email);
     }
 
-    public function showVerifyOtp()
+    /**
+     * Menampilkan Halaman Pengisian OTP Pendaftaran Akun.
+     * 
+     * @return RedirectResponse|View
+     */
+    public function showVerifyOtp(): RedirectResponse|View
     {
         if (!session()->has('temp_user')) {
             return redirect()->route('register');
@@ -283,7 +351,12 @@ class AuthController extends Controller
         return view('auth.verify-otp', compact('phone'));
     }
 
-    public function resendRegisterOtp()
+    /**
+     * Mengirim Ulang Kode OTP Registrasi Akun.
+     * 
+     * @return RedirectResponse
+     */
+    public function resendRegisterOtp(): RedirectResponse
     {
         if (!session()->has('temp_user')) {
             return redirect()->route('register');
@@ -298,19 +371,28 @@ class AuthController extends Controller
             'otp_attempts'   => 0,
         ]);
 
-        $wa = $this->sendWaOtp($tempUser['phone'], $otpCode, 'Kirim Ulang OTP Pendaftaran PadelBook');
-
-        if (!$wa['ok']) {
-            return back()->withErrors(['otp' => $wa['error'] ?? 'Gagal mengirim ulang OTP.']);
-        }
+        $this->sendOtpEmail(
+            $tempUser['email'],
+            $tempUser['name'],
+            $otpCode,
+            'Verifikasi Pendaftaran (Baru)',
+            'Kode OTP baru untuk memverifikasi pendaftaran akun PadelBook Anda:',
+            5
+        );
 
         return back()->with(
             'info',
-            'Kode OTP baru telah dikirim ke WhatsApp ' . PhoneHelper::display($tempUser['phone'])
+            'Kode OTP baru telah dikirim ke Email ' . $tempUser['email']
         );
     }
 
-    public function verifyOtp(Request $request)
+    /**
+     * Memverifikasi Kode OTP Registrasi dan Menyimpan Akun Baru ke Database.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function verifyOtp(Request $request): RedirectResponse
     {
         $request->validate(['otp' => 'required|string|size:6']);
 
@@ -318,24 +400,28 @@ class AuthController extends Controller
         $expiry     = session('otp_expires_at');
         $attempts   = session('otp_attempts', 0);
 
+        // 1. Validasi sesi registrasi OTP
         if (!$sessionOtp || now()->gt($expiry)) {
             session()->forget(['temp_user', 'otp_code', 'otp_expires_at', 'otp_attempts']);
             return redirect()->route('register')
                 ->withErrors(['email' => 'Sesi OTP kedaluwarsa. Silakan daftar ulang.']);
         }
 
+        // 2. Batasi maksimum 5 kali percobaan
         if ($attempts >= 5) {
             session()->forget(['temp_user', 'otp_code', 'otp_expires_at', 'otp_attempts']);
             return redirect()->route('register')
                 ->withErrors(['email' => 'Terlalu banyak percobaan OTP yang salah. Silakan daftar ulang.']);
         }
 
+        // 3. Verifikasi kecocokan OTP
         if ($request->otp !== (string) $sessionOtp) {
             session(['otp_attempts' => $attempts + 1]);
             $remaining = 5 - ($attempts + 1);
             return back()->withErrors(['otp' => "Kode OTP salah. Sisa percobaan: {$remaining}."]);
         }
 
+        // 4. OTP Benar, buat record User permanen di database
         $tempUser = session('temp_user');
         $user = User::create([
             'name'              => $tempUser['name'],
@@ -351,38 +437,49 @@ class AuthController extends Controller
         session()->forget(['temp_user', 'otp_code', 'otp_expires_at', 'otp_attempts']);
         Auth::login($user);
 
-        return redirect()->route('dashboard.index')
-            ->with('success', 'Verifikasi WhatsApp berhasil! Selamat datang, ' . $user->name . '!');
+        return redirect()->intended('/')
+            ->with('success', 'Verifikasi Email berhasil! Selamat datang, ' . $user->name . '!');
     }
 
-    // ── Forgot Password via Email OTP ────────────────────────────────────────
+    // ── Forgot Password via WhatsApp OTP ────────────────────────────────────────
 
-    public function showForgotPassword()
+    /**
+     * Menampilkan Form Lupa Password.
+     * 
+     * @return View
+     */
+    public function showForgotPassword(): View
     {
         return view('auth.forgot-password');
     }
 
-    public function processForgotPassword(Request $request)
+    /**
+     * Memproses Lupa Password dengan Mengirimkan OTP WhatsApp Reset Password.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function processForgotPassword(Request $request): RedirectResponse
     {
         $request->validate([
-            'phone' => ['required', 'string', 'regex:/^(\+?62|0)8[0-9]{8,12}$/'],
+            'email' => ['required', 'string', 'email'],
         ], [
-            'phone.required' => 'Nomor WhatsApp wajib diisi.',
-            'phone.regex'    => 'Format nomor WhatsApp tidak valid. Gunakan format 08xxxxxxxxxx.',
+            'email.required' => 'Email wajib diisi.',
+            'email.email'    => 'Format email tidak valid.',
         ]);
 
-        $phone = PhoneHelper::normalize($request->phone);
-        $user  = User::where('phone', $phone)->first();
+        $user = User::where('email', $request->email)->first();
 
-        // Tampilkan pesan generik agar nomor yang tidak terdaftar tidak terekspos
+        // 1. Berikan pesan informatif jika email tidak ditemukan terdaftar
         if (!$user) {
             return back()
                 ->withInput()
-                ->withErrors(['phone' => 'Nomor WhatsApp ini tidak terdaftar. Pastikan nomor sesuai saat mendaftar.']);
+                ->withErrors(['email' => 'Email ini tidak terdaftar. Pastikan email sesuai saat mendaftar.']);
         }
 
         $otpCode = rand(100000, 999999);
 
+        // 2. Set sesi reset password
         session([
             'reset_user_id'      => $user->id,
             'reset_otp_code'     => $otpCode,
@@ -391,21 +488,27 @@ class AuthController extends Controller
             'reset_otp_verified' => false,
         ]);
 
-        $wa = $this->sendWaOtp($phone, $otpCode, 'Reset Password Akun PadelBook');
-        if (!$wa['ok']) {
-            session()->forget(['reset_user_id', 'reset_otp_code', 'reset_otp_expires', 'reset_otp_attempts', 'reset_otp_verified']);
-            return back()
-                ->withInput()
-                ->withErrors(['phone' => $wa['error'] ?? 'Gagal mengirim OTP ke WhatsApp. Coba lagi.']);
-        }
+        // 3. Kirim OTP via Email
+        $this->sendOtpEmail(
+            $user->email,
+            $user->name,
+            $otpCode,
+            'Reset Password',
+            'Anda meminta untuk mereset password akun PadelBook Anda. Gunakan kode OTP ini:',
+            10
+        );
 
-        $message = 'Kode OTP reset password telah dikirim ke WhatsApp ' . PhoneHelper::display($phone);
+        $message = 'Kode OTP reset password telah dikirim ke Email ' . $user->email;
 
-        return redirect()->route('password.reset.otp.verify')
-            ->with('info', $message);
+        return redirect()->route('password.reset.otp.verify')->with('info', $message);
     }
 
-    public function showVerifyResetOtp()
+    /**
+     * Menampilkan Halaman Pengisian OTP Reset Password.
+     * 
+     * @return RedirectResponse|View
+     */
+    public function showVerifyResetOtp(): RedirectResponse|View
     {
         if (!session()->has('reset_user_id')) {
             return redirect()->route('password.forgot');
@@ -414,7 +517,13 @@ class AuthController extends Controller
         return view('auth.verify-reset-otp', compact('user'));
     }
 
-    public function verifyResetOtp(Request $request)
+    /**
+     * Memverifikasi OTP Reset Password.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function verifyResetOtp(Request $request): RedirectResponse
     {
         $request->validate(['otp' => 'required|string|size:6']);
 
@@ -422,21 +531,21 @@ class AuthController extends Controller
         $expiry     = session('reset_otp_expires');
         $attempts   = session('reset_otp_attempts', 0);
 
-        // Sesi tidak ada atau kedaluwarsa
+        // 1. Cek validitas sesi reset
         if (!session()->has('reset_user_id') || !$sessionOtp || now()->gt($expiry)) {
             session()->forget(['reset_user_id', 'reset_otp_code', 'reset_otp_expires', 'reset_otp_attempts', 'reset_otp_verified']);
             return redirect()->route('password.forgot')
                 ->withErrors(['email' => 'Sesi OTP kedaluwarsa. Silakan mulai ulang proses reset password.']);
         }
 
-        // Batasi maksimal 5 percobaan — jika habis, session dihapus & harus ulang
+        // 2. Batasi 5 kali kesalahan percobaan OTP
         if ($attempts >= 5) {
             session()->forget(['reset_user_id', 'reset_otp_code', 'reset_otp_expires', 'reset_otp_attempts', 'reset_otp_verified']);
             return redirect()->route('password.forgot')
                 ->withErrors(['email' => 'Terlalu banyak percobaan OTP yang salah. Silakan mulai ulang proses reset password.']);
         }
 
-        // OTP salah — tambah hitungan, kembalikan ke halaman verifikasi
+        // 3. Verifikasi kecocokan OTP
         if ($request->otp !== (string) $sessionOtp) {
             session(['reset_otp_attempts' => $attempts + 1]);
             $remaining = 5 - ($attempts + 1);
@@ -445,7 +554,7 @@ class AuthController extends Controller
             ]);
         }
 
-        // OTP BENAR — tandai terverifikasi, hapus kode OTP dari sesi
+        // 4. OTP Benar, tandai sukses verifikasi
         session([
             'reset_otp_verified' => true,
         ]);
@@ -454,7 +563,12 @@ class AuthController extends Controller
         return redirect()->route('password.reset.form');
     }
 
-    public function resendResetOtp()
+    /**
+     * Mengirim Ulang Kode OTP Reset Password.
+     * 
+     * @return RedirectResponse
+     */
+    public function resendResetOtp(): RedirectResponse
     {
         $userId = session('reset_user_id');
         if (!$userId) {
@@ -469,22 +583,26 @@ class AuthController extends Controller
             'reset_otp_attempts' => 0,
         ]);
 
-        if (!$user->phone) {
-            return back()->withErrors(['otp' => 'Akun tidak memiliki nomor WhatsApp terdaftar.']);
-        }
+        $this->sendOtpEmail(
+            $user->email,
+            $user->name,
+            $otpCode,
+            'Reset Password (OTP Baru)',
+            'Anda meminta kode OTP baru untuk mereset password akun PadelBook Anda:',
+            10
+        );
 
-        $wa = $this->sendWaOtp($user->phone, $otpCode, 'Reset Password (OTP Baru)');
-
-        if (!$wa['ok']) {
-            return back()->withErrors(['otp' => $wa['error'] ?? 'Gagal mengirim ulang OTP.']);
-        }
-
-        return back()->with('info', 'Kode OTP baru telah dikirim ke WhatsApp ' . PhoneHelper::display($user->phone));
+        return back()->with('info', 'Kode OTP baru telah dikirim ke Email ' . $user->email);
     }
 
-    public function showResetPassword()
+    /**
+     * Menampilkan Form Pembuatan Password Baru.
+     * 
+     * @return RedirectResponse|View
+     */
+    public function showResetPassword(): RedirectResponse|View
     {
-        // Wajib: harus sudah melewati verifikasi OTP yang benar
+        // Proteksi: Pengguna wajib melewati validasi OTP reset terlebih dahulu
         if (!session('reset_otp_verified') || !session('reset_user_id')) {
             return redirect()->route('password.forgot')
                 ->withErrors(['email' => 'Silakan verifikasi OTP terlebih dahulu.']);
@@ -492,9 +610,15 @@ class AuthController extends Controller
         return view('auth.reset-password');
     }
 
-    public function resetPassword(Request $request)
+    /**
+     * Memproses Pengubahan Password Baru di Database.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function resetPassword(Request $request): RedirectResponse
     {
-        // Double-check: blokir akses langsung tanpa OTP terverifikasi
+        // Double-check proteksi akses langsung
         if (!session('reset_otp_verified') || !session('reset_user_id')) {
             return redirect()->route('password.forgot')
                 ->withErrors(['email' => 'Sesi tidak valid. Silakan ulangi proses reset password.']);
@@ -507,17 +631,24 @@ class AuthController extends Controller
             'password.min'       => 'Password minimal 8 karakter.',
         ]);
 
+        // Simpan password baru ke database
         $user = User::findOrFail(session('reset_user_id'));
         $user->update(['password' => Hash::make($request->password)]);
 
-        // Bersihkan semua sesi reset
+        // Bersihkan seluruh session reset password
         session()->forget(['reset_user_id', 'reset_otp_verified']);
 
         return redirect()->route('login')
             ->with('success', 'Password berhasil direset! Silakan login dengan password baru Anda. 🎉');
     }
 
-    public function logout(Request $request)
+    /**
+     * Memproses Logout Sesi Pengguna.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function logout(Request $request): RedirectResponse
     {
         Auth::logout();
         $request->session()->invalidate();
@@ -527,17 +658,41 @@ class AuthController extends Controller
 
     // ── Google OAuth ─────────────────────────────────────────────────────────
 
-    public function redirectToGoogle()
+    /**
+     * Mengalihkan Pengguna ke Halaman Pilihan Akun Google.
+     * 
+     * @return SymfonyRedirectResponse
+     */
+    public function redirectToGoogle(): SymfonyRedirectResponse
     {
-        return \Laravel\Socialite\Facades\Socialite::driver('google')
+        $driver = \Laravel\Socialite\Facades\Socialite::driver('google')
             ->with(['prompt' => 'select_account'])
-            ->redirect();
+            ->stateless();
+
+        if (app()->environment('local')) {
+            $driver->setHttpClient(new \GuzzleHttp\Client(['verify' => false]));
+        }
+
+        return $driver->redirect();
     }
 
-    public function handleGoogleCallback()
+    /**
+     * Memproses Callback API Google OAuth.
+     * 
+     * Membuat akun member otomatis jika belum terdaftar, lalu meloginkan pengguna.
+     * 
+     * @return RedirectResponse
+     */
+    public function handleGoogleCallback(): RedirectResponse
     {
         try {
-            $googleUser = \Laravel\Socialite\Facades\Socialite::driver('google')->user();
+            $driver = \Laravel\Socialite\Facades\Socialite::driver('google')->stateless();
+            
+            if (app()->environment('local')) {
+                $driver->setHttpClient(new \GuzzleHttp\Client(['verify' => false]));
+            }
+
+            $googleUser = $driver->user();
         } catch (\Exception $e) {
             Log::error('Socialite callback error: ' . $e->getMessage());
             return redirect()->route('login')
@@ -549,6 +704,7 @@ class AuthController extends Controller
                 ->withErrors(['email' => 'Gagal login via Google. Silakan coba login manual.']);
         }
 
+        // Buat user baru otomatis jika belum terdaftar (firstOrCreate)
         $user = User::firstOrCreate(
             ['email' => $googleUser->email],
             [
@@ -573,13 +729,28 @@ class AuthController extends Controller
             'status'     => 'success',
         ]);
 
-        return redirect()->route('dashboard.index')
+        // Berikan warning jika nomor WhatsApp belum dilengkapi pasca login Google
+        if (empty($user->phone)) {
+            return redirect()->route('dashboard.profile')
+                ->with('warning', 'Login berhasil! Mohon lengkapi Nomor WhatsApp Anda terlebih dahulu agar kami dapat mengirimkan notifikasi reservasi.');
+        }
+
+        return redirect()->intended('/')
             ->with('success', 'Berhasil masuk menggunakan akun Google!');
     }
 
-    // ── Sanctum API ──────────────────────────────────────────────────────────
+    // ── Sanctum REST API Endpoints ───────────────────────────────────────────
 
-    public function apiLogin(Request $request)
+    /**
+     * Endpoint API Login (Sanctum).
+     * 
+     * Mengembalikan plain text token jika kredensial benar.
+     * 
+     * @param Request $request
+     * @return JsonResponse
+     * @throws ValidationException
+     */
+    public function apiLogin(Request $request): JsonResponse
     {
         $request->validate([
             'email'    => 'required|email',
@@ -606,7 +777,13 @@ class AuthController extends Controller
         ]);
     }
 
-    public function apiRegister(Request $request)
+    /**
+     * Endpoint API Registrasi Member (Sanctum).
+     * 
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function apiRegister(Request $request): JsonResponse
     {
         $request->validate([
             'name'     => 'required|string|max:255',
@@ -632,3 +809,4 @@ class AuthController extends Controller
         ], 201);
     }
 }
+

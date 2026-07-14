@@ -9,19 +9,36 @@ use App\Models\User;
 use App\Models\Voucher;
 use App\Models\WalletTransaction;
 use App\Services\PaymentService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\View\View;
 
+/**
+ * Class DashboardController
+ * 
+ * Mengelola area personal pengguna (Member Dashboard) meliputi ringkasan dashboard,
+ * riwayat pemesanan lapangan, unduh tiket digital dengan QR code generator,
+ * pengiriman ulasan lapangan, mutasi saldo wallet digital (top-up & transaksi),
+ * serta penukaran loyalty points menjadi voucher gratis 1 jam.
+ * 
+ * @package App\Http\Controllers
+ */
 class DashboardController extends Controller
 {
     /**
-     * Dashboard Home.
+     * Tampilan Utama Dashboard Pengguna.
+     * 
+     * @return View
      */
-    public function index()
+    public function index(): View
     {
         $user = Auth::user();
+        
+        // Ambil 3 booking terakhir milik user
         $recentBookings = Booking::with('court')
             ->where('user_id', $user->id)
             ->orderBy('date', 'desc')
@@ -32,49 +49,59 @@ class DashboardController extends Controller
     }
 
     /**
-     * View Bookings History.
+     * Menampilkan Riwayat Semua Pemesanan/Booking Pengguna.
+     * 
+     * @return View
      */
-    public function bookings()
+    public function bookings(): View
     {
         $bookings = Booking::with('court')
             ->where('user_id', Auth::id())
             ->orderBy('date', 'desc')
-            ->paginate(5);
+            ->paginate(5); // Paginasi 5 item per halaman
 
         return view('dashboard.bookings', compact('bookings'));
     }
 
     /**
-     * View QR Pass Ticket.
+     * Menampilkan Tiket Digital & QR Code Sesi Lapangan.
+     * 
+     * @param int $id ID dari Booking
+     * @return View
      */
-    public function ticket(int $id)
+    public function ticket(int $id): View
     {
         $booking = Booking::with('court')->findOrFail($id);
 
+        // Proteksi Otorisasi: Hanya pemesan asli yang bisa melihat tiketnya
         if ($booking->user_id !== Auth::id()) {
             abort(403);
         }
 
-        // Generate QR code (fallback to JS QR code in frontend if package absent)
+        // Jalankan library QrCode Laravel jika terpasang untuk merender SVG QR Code
         $qrSvg = '';
         try {
             if (class_exists('\\SimpleSoftwareIO\\QrCode\\Facades\\QrCode')) {
                 $qrSvg = \SimpleSoftwareIO\QrCode\Facades\QrCode::size(200)->generate($booking->qr_code ?? $booking->id);
             }
         } catch (\Throwable $e) {
-            // silently fall back
+            // Silently fallback: Jika library absen, render QR Code di sisi client via JavaScript
         }
 
         return view('dashboard.ticket', compact('booking', 'qrSvg'));
     }
 
     /**
-     * Submit Court Review.
+     * Mengirimkan Ulasan & Rating Lapangan Padel.
+     * 
+     * @param Request $request
+     * @param int $id ID dari Booking
+     * @return JsonResponse|RedirectResponse
      */
-    public function submitReview(Request $request, int $id)
+    public function submitReview(Request $request, int $id): JsonResponse|RedirectResponse
     {
         $request->validate([
-            'rating' => 'required|integer|min:1|max:5',
+            'rating'  => 'required|integer|min:1|max:5',
             'comment' => 'nullable|string|max:500',
         ]);
 
@@ -84,18 +111,18 @@ class DashboardController extends Controller
             abort(403);
         }
 
-        // Validate that booking is completed or confirmed
+        // Validasi status: ulasan hanya bisa dikirimkan untuk sesi confirmed/completed
         if (!in_array($booking->status, ['confirmed', 'completed'])) {
             return back()->withErrors(['error' => 'Ulasan hanya dapat dikirimkan untuk sesi yang sudah berjalan/dikonfirmasi.']);
         }
 
-        // Save review
+        // Buat atau perbarui ulasan (satu booking hanya boleh memiliki satu ulasan)
         Review::updateOrCreate(
             ['booking_id' => $booking->id, 'user_id' => Auth::id()],
-            ['rating' => $request->rating, 'comment' => $request->comment]
+            ['rating'     => $request->rating, 'comment' => $request->comment]
         );
 
-        // Recalculate Court rating average
+        // Hitung ulang rata-rata rating lapangan terkait secara presisi
         $court = $booking->court;
         $avg = Review::whereHas('booking', function ($q) use ($court) {
             $q->where('court_id', $court->id);
@@ -103,6 +130,7 @@ class DashboardController extends Controller
 
         $court->update(['rating_avg' => round($avg ?? 0.0, 2)]);
 
+        // Kembalikan JSON jika diminta secara asinkronus (AJAX)
         if ($request->ajax() || $request->wantsJson()) {
             return response()->json([
                 'success' => true,
@@ -114,9 +142,11 @@ class DashboardController extends Controller
     }
 
     /**
-     * Wallet Screen.
+     * Menampilkan Halaman Wallet Digital & Riwayat Transaksi.
+     * 
+     * @return View
      */
-    public function wallet()
+    public function wallet(): View
     {
         $transactions = WalletTransaction::where('user_id', Auth::id())
             ->orderBy('created_at', 'desc')
@@ -126,12 +156,16 @@ class DashboardController extends Controller
     }
 
     /**
-     * Top-up Wallet.
+     * Memproses Top-up Saldo Wallet Digital.
+     * 
+     * @param Request $request
+     * @param PaymentService $paymentService
+     * @return RedirectResponse
      */
-    public function topUp(Request $request, PaymentService $paymentService)
+    public function topUp(Request $request, PaymentService $paymentService): RedirectResponse
     {
         $request->validate([
-            'amount' => 'required|numeric|min:10000',
+            'amount' => 'required|numeric|min:10000', // minimal top-up Rp 10.000
         ]);
 
         $paymentService->topUpWallet(Auth::id(), $request->amount, 'DEP-' . time());
@@ -140,75 +174,93 @@ class DashboardController extends Controller
     }
 
     /**
-     * Loyalty points ledger page.
+     * Menampilkan Halaman Riwayat Poin Loyalty Reward.
+     * 
+     * @return View
      */
-    public function loyalty()
+    public function loyalty(): View
     {
         $points = LoyaltyPoint::where('user_id', Auth::id())
             ->orderBy('created_at', 'desc')
             ->get();
 
-        // Get redeemeable vouchers: cost 50 loyalty points to redeem a 25K voucher!
         return view('dashboard.loyalty', compact('points'));
     }
 
     /**
-     * Redeem Voucher with points.
+     * Menukarkan Poin Loyalty Menjadi Voucher Gratis 1 Jam.
+     * 
+     * Menukarkan 10 poin loyalty yang didapat untuk memperoleh voucher bertipe `free_hour`.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
      */
-    public function redeemVoucher(Request $request)
+    public function redeemVoucher(Request $request): RedirectResponse
     {
         $user = User::findOrFail(Auth::id());
         
+        // Validasi kelayakan jumlah poin
         if ($user->points < 10) {
             return back()->withErrors(['points' => 'Poin Anda tidak mencukupi untuk penukaran voucher (minimal 10 poin).']);
         }
 
-        // Deduct points
+        // 1. Kurangi poin loyalty user
         $user->decrement('points', 10);
 
-        // Record loyalty transaction
+        // 2. Catat transaksi mutasi pengurangan poin
         LoyaltyPoint::create([
-            'user_id' => $user->id,
-            'points' => -10,
-            'type' => 'redeem',
+            'user_id'     => $user->id,
+            'points'      => -10,
+            'type'        => 'redeem',
             'description' => 'Redeem Main Gratis 1 Jam'
         ]);
 
-        // Generate voucher code
+        // 3. Buat record voucher promo baru yang siap dipakai saat checkout
         $code = 'GRATIS-' . strtoupper(Str::random(6));
         Voucher::create([
-            'code' => $code,
-            'type' => 'free_hour',
-            'value' => 0, // Dihitung otomatis di backend berdasarkan harga lapangan per jam
+            'code'        => $code,
+            'type'        => 'free_hour',
+            'value'       => 0, // dihitung otomatis gratis 1 jam pada saat checkout berdasarkan harga lapangan terkait
             'min_booking' => 0,
-            'quota' => 1,
-            'expired_at' => now()->addMonth(),
+            'quota'       => 1,
+            'expired_at'  => now()->addMonth(), // voucher berlaku selama 1 bulan sejak penukaran
         ]);
 
         return back()->with('success', "Penukaran berhasil! Gunakan kode voucher berikut saat checkout untuk main gratis 1 jam: **{$code}**");
     }
 
-    // --- Profile Editing ---
-    public function profile()
+    /**
+     * Menampilkan Form Profil Akun Pengguna.
+     * 
+     * @return View
+     */
+    public function profile(): View
     {
         return view('dashboard.profile', ['user' => Auth::user()]);
     }
 
-    public function updateProfile(Request $request)
+    /**
+     * Memperbarui Informasi Profil Pengguna (Nama, No HP/WA, Foto Profil).
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function updateProfile(Request $request): RedirectResponse
     {
         $user = User::findOrFail(Auth::id());
 
         $request->validate([
-            'name' => 'required|string|max:255',
-            'phone' => 'required|string|unique:users,phone,' . $user->id,
-            'avatar' => 'nullable|image|max:2048',
+            'name'   => 'required|string|max:255',
+            'phone'  => 'required|string|unique:users,phone,' . $user->id,
+            'avatar' => 'nullable|image|max:2048', // limit foto profil maksimal 2MB
         ]);
 
         $data = [
-            'name' => $request->name,
+            'name'  => $request->name,
             'phone' => $request->phone,
         ];
 
+        // Simpan avatar jika ada berkas foto profil yang diunggah
         if ($request->hasFile('avatar')) {
             $path = $request->file('avatar')->store('avatars', 'public');
             $data['avatar'] = '/storage/' . $path;
@@ -219,21 +271,30 @@ class DashboardController extends Controller
         return back()->with('success', 'Profil Anda berhasil diperbarui!');
     }
 
-    public function updatePassword(Request $request)
+    /**
+     * Memperbarui Password Pengguna dari Dashboard.
+     * 
+     * @param Request $request
+     * @return RedirectResponse
+     */
+    public function updatePassword(Request $request): RedirectResponse
     {
         $request->validate([
             'current_password' => 'required|string',
-            'password' => 'required|string|min:8|confirmed',
+            'password'         => 'required|string|min:8|confirmed',
         ]);
 
         $user = User::findOrFail(Auth::id());
 
+        // Pastikan password lama cocok
         if (!Hash::check($request->current_password, $user->password)) {
             return back()->withErrors(['current_password' => 'Password saat ini tidak cocok.']);
         }
 
+        // Update password baru dengan enkripsi Hash
         $user->update(['password' => Hash::make($request->password)]);
 
         return back()->with('success', 'Password Anda berhasil diubah!');
     }
 }
+

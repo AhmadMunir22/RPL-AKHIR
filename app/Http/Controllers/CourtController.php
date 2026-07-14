@@ -3,27 +3,53 @@
 namespace App\Http\Controllers;
 
 use App\Models\Court;
+use App\Models\Review;
 use App\Services\BookingService;
 use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\View\View;
 
+/**
+ * Class CourtController
+ * 
+ * Mengelola interaksi dengan katalog lapangan padel untuk pengguna (member/publik).
+ * Menyajikan landing page dengan statistik slot dinamis, katalog dengan filter tipe
+ * dan harga, detail informasi lapangan beserta kalender ketersediaan 42 cell,
+ * ulasan member, serta API endpoint pendukung.
+ * 
+ * @package App\Http\Controllers
+ */
 class CourtController extends Controller
 {
+    /**
+     * Service untuk mengambil data ketersediaan slot.
+     */
     protected BookingService $bookingService;
 
+    /**
+     * CourtController constructor.
+     * 
+     * @param BookingService $bookingService
+     */
     public function __construct(BookingService $bookingService)
     {
         $this->bookingService = $bookingService;
     }
 
     /**
-     * Web Landing Page.
+     * Landing Page Aplikasi (Sisi Publik).
+     * 
+     * Menampilkan 3 lapangan teratas dan menghitung statistik ketersediaan slot
+     * secara langsung (live-aggregated) untuk hari ini.
+     * 
+     * @return View
      */
-    public function landing()
+    public function landing(): View
     {
         $courts = Court::where('status', 'active')->orderBy('name', 'asc')->take(3)->get();
         
-        // Calculate dynamic real-time slot statistics for today
+        // Kalkulasi ketersediaan slot dinamis secara real-time untuk hari ini
         $todayStr = now()->toDateString();
         $totalSlotsToday = 0;
         $bookedSlotsToday = 0;
@@ -44,30 +70,33 @@ class CourtController extends Controller
     }
 
     /**
-     * Web Court Catalog Listing with Filters.
+     * Menampilkan Katalog Lapangan dengan Filter & Pencarian.
+     * 
+     * @param Request $request
+     * @return string|View
      */
-    public function index(Request $request)
+    public function index(Request $request): string|View
     {
         $query = Court::query();
 
-        // Search name
+        // 1. Filter Pencarian Nama
         if ($request->filled('search')) {
             $query->where('name', 'like', '%' . $request->search . '%');
         }
 
-        // Filter Type (Indoor / Outdoor)
+        // 2. Filter Tipe (Indoor / Outdoor)
         if ($request->filled('type')) {
             $query->where('type', $request->type);
         }
 
-        // Filter Max price
+        // 3. Filter Harga Maksimal per jam
         if ($request->filled('price_max')) {
             $query->where('price_per_hour', '<=', $request->price_max);
         }
 
         $courts = $query->orderBy('name')->paginate(6);
 
-        // If AJAX request, return compiled list cards for debounce search
+        // 4. Jika request datang dari AJAX, kembalikan markup card parsial saja (fitur search debouncing)
         if ($request->ajax()) {
             return view('courts._cards', compact('courts'))->render();
         }
@@ -76,17 +105,23 @@ class CourtController extends Controller
     }
 
     /**
-     * Web Court Detail Page.
+     * Menampilkan Halaman Detail Lapangan & Widget Kalender Reservasi.
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return View
      */
-    public function show(Request $request, int $id)
+    public function show(Request $request, int $id): View
     {
         $court = Court::with(['reviews.user'])->findOrFail($id);
         $slots = $this->bookingService->getOperationalSlots();
 
-        $year = (int) $request->input('year', now()->year);
+        // Parameter navigasi kalender bulanan
+        $year  = (int) $request->input('year', now()->year);
         $month = (int) $request->input('month', now()->month);
         $month = max(1, min(12, $month));
 
+        // Bangun grid kalender 42 hari untuk bulan terpilih
         $calendar = $this->buildCalendarMonth($year, $month);
 
         return view('courts.show', array_merge(
@@ -96,7 +131,14 @@ class CourtController extends Controller
     }
 
     /**
-     * Build a 6-week (42 cell) calendar grid for the booking widget.
+     * Membuat Grid Kalender 6 Minggu (42 Cell) untuk Widget Booking.
+     * 
+     * Menghasilkan array hari-hari dalam sebulan, lengkap dengan label hari,
+     * status apakah berada di luar bulan saat ini, dan status apakah tanggal telah berlalu.
+     * 
+     * @param int $year Tahun
+     * @param int $month Bulan
+     * @return array
      */
     private function buildCalendarMonth(int $year, int $month): array
     {
@@ -107,23 +149,26 @@ class CourtController extends Controller
 
         $first = Carbon::createFromDate($year, $month, 1)->startOfDay();
         $today = now()->startOfDay();
+        
+        // Hitung hari awal grid kalender (minggu pertama dapat dimulai dari tanggal bulan sebelumnya)
         $start = $first->copy()->startOfMonth()->subDays($first->copy()->startOfMonth()->dayOfWeek);
 
         $calendarDays = [];
         for ($i = 0; $i < 42; $i++) {
             $d = $start->copy()->addDays($i);
             $calendarDays[] = [
-                'date' => $d->toDateString(),
-                'label' => $d->day,
+                'date'     => $d->toDateString(),
+                'label'    => $d->day,
                 'in_month' => $d->month === $month,
                 'is_today' => $d->isSameDay($today),
-                'is_past' => $d->lt($today),
+                'is_past'  => $d->lt($today),
             ];
         }
 
         $prev = $first->copy()->subMonth();
         $next = $first->copy()->addMonth();
 
+        // Tanggal aktif di bulan ini yang belum lewat (dapat dipilih untuk reservasi)
         $calMonthDates = collect($calendarDays)
             ->filter(fn (array $day) => $day['in_month'] && ! $day['is_past'])
             ->pluck('date')
@@ -131,23 +176,27 @@ class CourtController extends Controller
             ->all();
 
         return [
-            'calYear' => $year,
-            'calMonth' => $month,
+            'calYear'       => $year,
+            'calMonth'      => $month,
             'calMonthLabel' => $monthNames[$month - 1] . ' ' . $year,
-            'calPrevYear' => $prev->year,
-            'calPrevMonth' => $prev->month,
-            'calNextYear' => $next->year,
-            'calNextMonth' => $next->month,
-            'calendarDays' => $calendarDays,
+            'calPrevYear'   => $prev->year,
+            'calPrevMonth'  => $prev->month,
+            'calNextYear'   => $next->year,
+            'calNextMonth'  => $next->month,
+            'calendarDays'  => $calendarDays,
             'calendarWeeks' => array_chunk($calendarDays, 7),
             'calMonthDates' => $calMonthDates,
         ];
     }
 
     /**
-     * Public JSON: hourly slot availability for the court booking calendar.
+     * Mengambil JSON Ketersediaan Slot Per Jam dari Lapangan Tertentu.
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return JsonResponse
      */
-    public function availability(Request $request, int $id)
+    public function availability(Request $request, int $id): JsonResponse
     {
         $request->validate([
             'date' => 'required|date_format:Y-m-d',
@@ -157,21 +206,23 @@ class CourtController extends Controller
         $availabilities = $this->bookingService->getAvailability($id, $request->date);
 
         return response()->json([
-            'date' => $request->date,
+            'date'     => $request->date,
             'court_id' => $id,
-            'slots' => $availabilities,
+            'slots'    => $availabilities,
         ]);
     }
 
     /**
-     * Public JSON: real-time aggregated slot availability for today (used by landing widget).
+     * Mengambil Live Availability Teragregasi (Semua Lapangan Aktif untuk Hari Ini).
+     * 
+     * @return JsonResponse
      */
-    public function liveAvailability()
+    public function liveAvailability(): JsonResponse
     {
         $todayStr = now()->toDateString();
         $courts = Court::where('status', 'active')->get();
 
-        // Aggregate all slots from all active courts for today
+        // Gabungkan seluruh ketersediaan slot lapangan aktif hari ini
         $allSlots = [];
         foreach ($courts as $court) {
             $availabilities = $this->bookingService->getAvailability($court->id, $todayStr);
@@ -204,7 +255,13 @@ class CourtController extends Controller
 
     // --- Sanctum REST API Endpoints ---
 
-    public function apiIndex(Request $request)
+    /**
+     * Endpoint API melihat daftar lapangan aktif.
+     * 
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function apiIndex(Request $request): JsonResponse
     {
         $query = Court::where('status', 'active');
 
@@ -216,11 +273,18 @@ class CourtController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $courts
+            'data'    => $courts
         ]);
     }
 
-    public function apiAvailability(Request $request, int $id)
+    /**
+     * Endpoint API ketersediaan slot lapangan.
+     * 
+     * @param Request $request
+     * @param int $id
+     * @return JsonResponse
+     */
+    public function apiAvailability(Request $request, int $id): JsonResponse
     {
         $request->validate([
             'date' => 'required|date_format:Y-m-d'
@@ -229,14 +293,20 @@ class CourtController extends Controller
         $availabilities = $this->bookingService->getAvailability($id, $request->date);
 
         return response()->json([
-            'success' => true,
-            'court_id' => $id,
-            'date' => $request->date,
+            'success'      => true,
+            'court_id'     => $id,
+            'date'         => $request->date,
             'availability' => $availabilities
         ]);
     }
 
-    public function apiReviews(int $id)
+    /**
+     * Endpoint API mengambil riwayat ulasan & rating rata-rata dari lapangan.
+     * 
+     * @param int $id
+     * @return JsonResponse
+     */
+    public function apiReviews(int $id): JsonResponse
     {
         $court = Court::findOrFail($id);
         $reviews = \App\Models\Review::with('user:id,name,avatar')
@@ -247,10 +317,11 @@ class CourtController extends Controller
             ->get();
 
         return response()->json([
-            'success' => true,
-            'rating_avg' => number_format($court->rating_avg, 1),
+            'success'       => true,
+            'rating_avg'    => number_format($court->rating_avg, 1),
             'reviews_count' => $reviews->count(),
-            'reviews' => $reviews
+            'reviews'       => $reviews
         ]);
     }
 }
+

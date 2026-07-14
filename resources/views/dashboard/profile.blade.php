@@ -31,8 +31,16 @@
                 </div>
 
                 <div class="mb-4">
-                    <label for="phone" class="form-label text-secondary small">Nomor WhatsApp</label>
-                    <input type="text" class="form-control form-control-sporty" id="phone" name="phone" value="{{ old('phone', $user->phone) }}" required>
+                    <label for="phone" class="form-label text-secondary small">
+                        Nomor WhatsApp
+                        @if(empty($user->phone))
+                            <span class="badge bg-danger ms-2" style="font-size:0.7rem;"><i class="fa-solid fa-circle-exclamation me-1"></i>Wajib Diisi</span>
+                        @endif
+                    </label>
+                    <input type="text" class="form-control form-control-sporty {{ empty($user->phone) ? 'border-danger' : '' }}" id="phone" name="phone" value="{{ old('phone', $user->phone) }}" required>
+                    @if(empty($user->phone))
+                        <div class="form-text text-danger mt-2" style="font-size:0.8rem;"><i class="fa-solid fa-circle-info me-1"></i>Anda harus mengisi Nomor WhatsApp agar dapat melanjutkan pemesanan lapangan.</div>
+                    @endif
                 </div>
 
                 <button type="submit" class="btn btn-sporty w-100 py-3">

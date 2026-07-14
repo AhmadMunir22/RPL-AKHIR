@@ -1,31 +1,31 @@
 @extends('layouts.auth')
-@section('title', 'Verifikasi WhatsApp — PadelBook')
+@section('title', 'Verifikasi Email — PadelBook')
 
 @section('content')
 <div class="text-center mb-4">
     <div style="
         display:inline-flex;align-items:center;justify-content:center;
         width:72px;height:72px;border-radius:50%;margin-bottom:16px;
-        background:linear-gradient(135deg,rgba(224,122,95,0.18),rgba(224,122,95,0.06));
-        border:2px solid rgba(224,122,95,0.35);
-        box-shadow:0 0 28px rgba(224,122,95,0.15);
+        background:linear-gradient(135deg,rgba(59,130,246,0.18),rgba(59,130,246,0.06));
+        border:2px solid rgba(59,130,246,0.35);
+        box-shadow:0 0 28px rgba(59,130,246,0.15);
     ">
-        <i class="fa-brands fa-whatsapp" style="font-size:1.9rem;color:#25D366;"></i>
+        <i class="fa-solid fa-envelope" style="font-size:1.9rem;color:#3b82f6;"></i>
     </div>
     <h2 style="font-family:var(--font-display);font-size:1.5rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">
-        Verifikasi WhatsApp
+        Verifikasi Email
     </h2>
     <p style="color:var(--text-muted);font-size:0.88rem;line-height:1.6;">
-        Kode OTP 6-digit telah dikirim ke WhatsApp<br>
-        <strong style="color:var(--accent-light);">{{ $phone ?? 'nomor yang Anda daftarkan' }}</strong>
+        Kode OTP 6-digit telah dikirim ke Email<br>
+        <strong style="color:#60a5fa;">{{ session('temp_user.email') ?? 'email yang Anda daftarkan' }}</strong>
     </p>
 </div>
 
 {{-- Flash info --}}
 @if(session('info'))
-<div style="margin-bottom:20px;padding:12px 16px;background:rgba(224,122,95,0.08);border:1px solid rgba(224,122,95,0.25);border-radius:12px;display:flex;align-items:center;gap:10px;">
-    <i class="fa-brands fa-whatsapp" style="color:var(--accent);font-size:1.2rem;"></i>
-    <span style="font-size:0.85rem;color:var(--accent-light);">{{ session('info') }}</span>
+<div style="margin-bottom:20px;padding:12px 16px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.25);border-radius:12px;display:flex;align-items:center;gap:10px;">
+    <i class="fa-solid fa-envelope" style="color:#60a5fa;font-size:1.2rem;"></i>
+    <span style="font-size:0.85rem;color:#93c5fd;">{{ session('info') }}</span>
 </div>
 @endif
 
@@ -63,12 +63,12 @@
 
 <div style="text-align:center;margin-top:8px;">
     <p style="color:var(--text-muted);font-size:0.83rem;margin:0 0 10px;">
-        Tidak menerima kode di WhatsApp?
+        Tidak menerima kode di Email?
     </p>
     <form action="{{ route('otp.resend') }}" method="POST" class="d-inline">
         @csrf
         <button type="submit" class="btn btn-ghost btn-sm py-2 px-3" style="font-size:0.85rem;">
-            <i class="fa-brands fa-whatsapp me-1"></i>Kirim Ulang OTP
+            <i class="fa-solid fa-envelope me-1"></i>Kirim Ulang OTP
         </button>
     </form>
     <p style="color:var(--text-muted);font-size:0.78rem;margin:12px 0 0;">

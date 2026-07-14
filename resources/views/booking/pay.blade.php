@@ -193,6 +193,8 @@
 @endsection
 
 @section('scripts')
+{{-- Load Midtrans Snap.js --}}
+<script src="{{ config('services.midtrans.snap_url') }}" data-client-key="{{ config('services.midtrans.client_key') }}"></script>
 <script>
     function paymentGateway() {
         return {
@@ -209,24 +211,42 @@
                 this.showError = false;
                 this.loading = true;
 
-                // Try real DOKU payment
-                axios.post('{{ route("booking.pay-doku") }}', {
+                // Request Snap Token dari backend kita
+                axios.post('{{ route("booking.pay-midtrans") }}', {
                     booking_id: {{ $booking->id }},
                     pay_amount: this.amountToPay,
                     payment_type: this.method
                 })
                 .then(response => {
-                    if (response.data.success && response.data.url) {
-                        // Redirect to DOKU Hosted Checkout
-                        window.location.href = response.data.url;
+                    if (response.data.success && response.data.snap_token) {
+                        // Tampilkan popup Midtrans Snap
+                        snap.pay(response.data.snap_token, {
+                            // Callback saat transaksi berhasil (misal GoPay/QRIS lunas)
+                            onSuccess: function(result) {
+                                window.location.href = '{{ route("dashboard.bookings") }}';
+                            },
+                            // Callback saat transaksi pending (misal VA BNI sedang menunggu transfer)
+                            onPending: function(result) {
+                                window.location.href = '{{ route("dashboard.bookings") }}';
+                            },
+                            // Callback saat transaksi gagal
+                            onError: function(result) {
+                                alert('Pembayaran gagal atau ditolak. Silakan coba lagi.');
+                                this.loading = false;
+                            }.bind(this),
+                            // Callback saat user menutup popup tanpa membayar
+                            onClose: function() {
+                                this.loading = false;
+                            }.bind(this)
+                        });
                     } else {
-                        alert(response.data.message || 'Gagal memulai pembayaran dengan DOKU.');
+                        alert(response.data.message || 'Gagal memulai pembayaran dengan Midtrans.');
                         this.loading = false;
                     }
                 })
                 .catch(error => {
-                    console.error('DOKU error:', error);
-                    alert('Terjadi kesalahan saat menghubungi server DOKU: ' + (error.response?.data?.message || error.message));
+                    console.error('Midtrans error:', error);
+                    alert('Terjadi kesalahan saat menghubungi server: ' + (error.response?.data?.message || error.message));
                     this.loading = false;
                 });
             }

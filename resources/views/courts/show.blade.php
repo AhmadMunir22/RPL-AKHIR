@@ -69,6 +69,7 @@
     }
     .booking-legend-pill.pip-avail .pip { background: #22c55e; color: #22c55e; }
     .booking-legend-pill.pip-booked .pip { background: #ef4444; color: #ef4444; }
+    .booking-legend-pill.pip-past .pip { background: #6b7280; color: #6b7280; }
     .booking-legend-pill.pip-hint i { color: var(--accent); }
 
     .court-booking-panel {
@@ -339,6 +340,17 @@
         cursor: not-allowed;
         opacity: 0.75;
     }
+    /* Slot yang jam-nya sudah berlalu (hari ini) */
+    .court-slot-past {
+        background: rgba(255, 255, 255, 0.05);
+        color: rgba(255, 255, 255, 0.3);
+        cursor: not-allowed;
+        border: 2px solid rgba(255, 255, 255, 0.08);
+        opacity: 0.55;
+    }
+    .court-slot-past .court-slot-time {
+        text-decoration: line-through;
+    }
     .court-slot-label {
         display: block;
         font-size: 0.58rem;
@@ -493,6 +505,7 @@
             <div class="booking-legend">
                 <span class="booking-legend-pill pip-avail"><span class="pip"></span> Tersedia</span>
                 <span class="booking-legend-pill pip-booked"><span class="pip"></span> Dipesan</span>
+                <span class="booking-legend-pill pip-past"><span class="pip"></span> Jam Lewat</span>
                 <span class="booking-legend-pill pip-hint"><i class="fa-solid fa-hand-pointer"></i> Klik hari</span>
             </div>
 
@@ -565,14 +578,21 @@
                             <template x-for="item in slotsAvailability" :key="item.slot">
                                 <div
                                     class="court-slot"
-                                    :class="item.is_available
-                                        ? (selectedSlots.includes(item.slot) ? 'court-slot-available selected' : 'court-slot-available')
-                                        : 'court-slot-booked'"
-                                    @click="item.is_available && toggleSlot(item)"
-                                    :title="item.is_available ? ('Pilih ' + item.slot) : (item.is_blocked ? 'Pemeliharaan' : 'Sudah dipesan')"
+                                    :class="item.is_past
+                                        ? 'court-slot-past'
+                                        : (item.is_available
+                                            ? (selectedSlots.includes(item.slot) ? 'court-slot-available selected' : 'court-slot-available')
+                                            : 'court-slot-booked')"
+                                    @click="!item.is_past && item.is_available && toggleSlot(item)"
+                                    :title="item.is_past
+                                        ? 'Jam ini sudah lewat'
+                                        : (item.is_available ? ('Pilih ' + item.slot) : (item.is_blocked ? 'Pemeliharaan' : 'Sudah dipesan'))"
+                                    :style="item.is_past || !item.is_available ? 'cursor:not-allowed' : 'cursor:pointer'"
                                 >
                                     <span class="court-slot-time" x-text="item.slot"></span>
-                                    <span class="court-slot-label" x-text="item.is_available ? 'Tersedia' : (item.is_blocked ? 'Pemeliharaan' : 'Dipesan')"></span>
+                                    <span class="court-slot-label"
+                                        x-text="item.is_past ? 'Lewat' : (item.is_available ? 'Tersedia' : (item.is_blocked ? 'Pemeliharaan' : 'Dipesan'))"
+                                    ></span>
                                 </div>
                             </template>
                         </div>
@@ -652,7 +672,36 @@
             loadingSlots: false,
 
             init() {
+                // Fetch semua tanggal bulan ini untuk kalender (hanya sekali)
                 CAL_MONTH_DATES.forEach(date => this.fetchAvailability(date, true));
+
+                // Real-time polling: refresh slot tanggal yang sedang dibuka setiap 5 detik
+                setInterval(() => {
+                    if (this.expandedDate) {
+                        this.refreshActiveDate();
+                    }
+                }, 5000);
+            },
+
+            refreshActiveDate() {
+                if (!this.expandedDate) return;
+                const date = this.expandedDate;
+                const params = new URLSearchParams({ date });
+                fetch(`/courts/${COURT_ID}/availability?${params}`)
+                    .then(r => r.ok ? r.json() : Promise.reject())
+                    .then(data => {
+                        const slots = data.slots || [];
+                        this.availabilityCache = { ...this.availabilityCache, [date]: slots };
+                        if (this.expandedDate === date) {
+                            this.slotsAvailability = slots;
+                            // Hapus slot yang terpilih user jika ternyata sudah dibooking orang lain
+                            this.selectedSlots = this.selectedSlots.filter(s => {
+                                const found = slots.find(sl => sl.slot === s);
+                                return found && found.is_available;
+                            });
+                        }
+                    })
+                    .catch(() => {});
             },
 
             selectDay(date) {
@@ -669,11 +718,8 @@
             },
 
             fetchAvailability(date, cacheOnly = false) {
-                if (this.availabilityCache[date] !== undefined) {
-                    if (!cacheOnly && this.expandedDate === date) {
-                        this.slotsAvailability = this.availabilityCache[date];
-                        this.loadingSlots = false;
-                    }
+                // Untuk tampilan kalender (cacheOnly=true), cek local cache dulu
+                if (cacheOnly && this.availabilityCache[date] !== undefined) {
                     return;
                 }
 
@@ -707,7 +753,8 @@
             countAvailable(date) {
                 const slots = this.availabilityCache[date];
                 if (!slots) return 0;
-                return slots.filter(s => s.is_available).length;
+                // Slot past tidak dihitung sebagai tersedia
+                return slots.filter(s => s.is_available && !s.is_past).length;
             },
 
             countBooked(date) {

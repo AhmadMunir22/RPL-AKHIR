@@ -388,7 +388,7 @@
                 <div class="feature-card">
                     <div class="feature-icon-wrap"><i class="fa-solid fa-wallet"></i></div>
                     <h5 style="font-family:var(--font-display);font-weight:700;margin-bottom:10px;">Multi-Metode Pembayaran</h5>
-                    <p style="color:var(--text-muted);font-size:0.9rem;margin:0;line-height:1.7;">Mendukung berbagai metode pembayaran via DOKU (Transfer Bank, QRIS, E-Wallet) maupun Transfer Manual.</p>
+                    <p style="color:var(--text-muted);font-size:0.9rem;margin:0;line-height:1.7;">Mendukung berbagai metode pembayaran via Midtrans (Transfer Bank, QRIS, E-Wallet) maupun Transfer Manual.</p>
                 </div>
             </div>
             <div class="col-md-4 fade-up fade-up-delay-3">
@@ -407,9 +407,9 @@
             </div>
             <div class="col-md-4 fade-up fade-up-delay-2">
                 <div class="feature-card">
-                    <div class="feature-icon-wrap"><i class="fa-brands fa-whatsapp"></i></div>
-                    <h5 style="font-family:var(--font-display);font-weight:700;margin-bottom:10px;">Notifikasi WhatsApp</h5>
-                    <p style="color:var(--text-muted);font-size:0.9rem;margin:0;line-height:1.7;">Konfirmasi dan reminder jadwal otomatis via WhatsApp agar Anda tidak pernah terlewat sesi latihan.</p>
+                    <div class="feature-icon-wrap"><i class="fa-solid fa-envelope"></i></div>
+                    <h5 style="font-family:var(--font-display);font-weight:700;margin-bottom:10px;">Notifikasi Email</h5>
+                    <p style="color:var(--text-muted);font-size:0.9rem;margin:0;line-height:1.7;">Konfirmasi booking, tiket QR, dan reminder jadwal otomatis dikirim ke Email Anda agar tidak pernah terlewat sesi latihan.</p>
                 </div>
             </div>
             <div class="col-md-4 fade-up fade-up-delay-3">

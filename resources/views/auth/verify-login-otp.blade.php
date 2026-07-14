@@ -15,25 +15,23 @@
     <h2 style="font-family:var(--font-display);font-size:1.5rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">
         Verifikasi OTP Login
     </h2>
-    <p style="color:var(--text-muted);font-size:0.88rem;line-height:1.5;">
-        Kode OTP 6-digit telah dikirim ke<br>
-        <strong style="color:var(--text-secondary);">
+
+</div>
+{{-- Info Email Box --}}
+<div style="margin-bottom:20px;padding:12px 16px;background:rgba(224,122,95,0.08);border:1px solid rgba(224,122,95,0.25);border-radius:12px;display:flex;align-items:center;gap:10px;">
+    <i class="fa-solid fa-envelope" style="color:var(--accent);font-size:1rem;"></i>
+    <span style="font-size:0.85rem;color:var(--accent-light);">
+        Kode OTP telah dikirim ke Email<br>
+        <strong>
             @if(isset($user))
-                {{ substr($user->email, 0, 3) }}***@{{ explode('@', $user->email)[1] }}
+                {{ substr($user->email, 0, 3) . '***@' . explode('@', $user->email)[1] }}
             @else
                 email terdaftar Anda
             @endif
         </strong>
-    </p>
+    </span>
 </div>
 
-{{-- Flash info --}}
-@if(session('info'))
-<div style="margin-bottom:20px;padding:12px 16px;background:rgba(224,122,95,0.08);border:1px solid rgba(224,122,95,0.25);border-radius:12px;display:flex;align-items:center;gap:10px;">
-    <i class="fa-solid fa-envelope" style="color:var(--accent);font-size:1rem;"></i>
-    <span style="font-size:0.85rem;color:var(--accent-light);">{{ session('info') }}</span>
-</div>
-@endif
 
 <form action="{{ route('login.otp.verify') }}" method="POST" id="otp-login-form">
     @csrf

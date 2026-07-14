@@ -31,9 +31,9 @@ class PhoneHelper
     }
 
     /**
-     * Format for Fonnte API (628xxxxxxxx — format yang terbukti terkirim).
+     * Format for Kata AI API (628xxxxxxxx — format yang terbukti terkirim).
      */
-    public static function fonnteTarget(string $phone): string
+    public static function kataAiTarget(string $phone): string
     {
         return self::normalize($phone);
     }

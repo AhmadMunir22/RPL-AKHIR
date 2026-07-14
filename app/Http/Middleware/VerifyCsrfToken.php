@@ -13,6 +13,6 @@ class VerifyCsrfToken extends Middleware
      */
     protected $except = [
         'api/payments/callback',
-        'booking/pay-doku/callback',
+        'booking/midtrans-notification', // Webhook Midtrans — tidak menggunakan sesi browser
     ];
 }

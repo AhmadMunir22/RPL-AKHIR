@@ -46,7 +46,7 @@
                                         };
                                         $methodLabel = match($log->method) {
                                             'google'   => 'Google',
-                                            'otp'      => 'OTP WhatsApp',
+                                            'otp'      => 'OTP Email',
                                             'password' => 'Password',
                                             default    => strtoupper($log->method),
                                         };

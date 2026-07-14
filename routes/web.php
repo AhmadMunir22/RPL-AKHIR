@@ -65,7 +65,8 @@ Route::middleware(['auth'])->group(function () {
     
     // Gateway endpoints
     Route::post('/booking/pay-wallet', [PaymentController::class, 'payWithWallet'])->name('booking.pay-wallet');
-    Route::post('/booking/pay-doku', [PaymentController::class, 'payWithDoku'])->name('booking.pay-doku');
+    Route::post('/booking/pay-midtrans', [PaymentController::class, 'payWithMidtrans'])->name('booking.pay-midtrans');
+    Route::post('/booking/pay-mock', [PaymentController::class, 'payMock'])->name('booking.pay-mock');
 
     Route::post('/booking/pay/{id}/upload-receipt', [PaymentController::class, 'uploadReceipt'])->name('booking.upload-receipt');
 
@@ -127,5 +128,6 @@ Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () 
     Route::get('/login-logs', [AdminController::class, 'loginLogs'])->name('login-logs');
 });
 
-// Payment Webhooks (Outside auth middleware, handle their own security)
-Route::post('/booking/pay-doku/callback', [PaymentController::class, 'dokuCallback'])->name('booking.callback-doku');
+// Midtrans Webhook Notification (Di luar auth middleware — dipanggil oleh server Midtrans)
+// PENTING: Pastikan endpoint ini dikecualikan dari CSRF verification di App\Http\Middleware\VerifyCsrfToken
+Route::post('/booking/midtrans-notification', [PaymentController::class, 'midtransNotification'])->name('booking.midtrans-notification');

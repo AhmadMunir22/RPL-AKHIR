@@ -22,19 +22,19 @@
     </div>
 
     <div class="mb-3">
-        <label class="form-label-sporty">Nomor WhatsApp</label>
+        <label class="form-label-sporty">Nomor Telepon / WA</label>
         <div class="position-relative">
             <span class="position-absolute" style="left:14px;top:50%;transform:translateY(-50%);color:var(--text-muted);font-size:0.9rem;">
-                <i class="fa-brands fa-whatsapp" style="color:#25D366;"></i>
+                <i class="fa-solid fa-phone" style="color:var(--accent);"></i>
             </span>
             <input type="tel" name="phone" id="phone" class="form-control form-control-sporty ps-5"
                    placeholder="081234567890" value="{{ old('phone') }}" required
                    inputmode="numeric" autocomplete="tel"
                    pattern="(\+62|62|0)8[0-9]{8,12}"
-                   title="Format: 08xxxxxxxxxx — OTP dikirim ke nomor ini">
+                   title="Format: 08xxxxxxxxxx">
         </div>
         <small class="d-block mt-1" style="color:var(--text-muted);font-size:0.78rem;opacity:0.9;">
-            Kode OTP dikirim ke WhatsApp nomor ini.
+            <i class="fa-solid fa-envelope me-1" style="color:var(--accent);"></i>Kode OTP verifikasi akan dikirim ke <strong>Email</strong> Anda.
         </small>
         @error('phone')
             <div class="text-danger small mt-1">{{ $message }}</div>
@@ -55,10 +55,18 @@
         </div>
     </div>
 
-    <div class="mb-4">
+    <div class="mb-4" x-data="{ show: false }">
         <label class="form-label-sporty">Konfirmasi Password</label>
-        <input type="password" name="password_confirmation" class="form-control form-control-sporty"
-               placeholder="Ulangi password" required autocomplete="new-password">
+        <div class="position-relative">
+            <input :type="show ? 'text' : 'password'" name="password_confirmation"
+                   class="form-control form-control-sporty pe-5"
+                   placeholder="Ulangi password" required autocomplete="new-password">
+            <button type="button" class="btn border-0 p-0 position-absolute"
+                    style="top:50%;right:14px;transform:translateY(-50%);color:var(--text-muted);background:transparent;"
+                    @click="show = !show">
+                <i :class="show ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'" style="font-size:0.9rem;"></i>
+            </button>
+        </div>
     </div>
 
     <button type="submit" id="btn-register" class="btn btn-sporty w-100 py-3 mb-3">

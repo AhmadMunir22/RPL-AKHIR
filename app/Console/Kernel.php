@@ -28,7 +28,7 @@ class Kernel extends ConsoleKernel
                 });
         })->hourly();
 
-        // 2. Reminder booking H-1 via WhatsApp (runs daily at 08:00)
+        // 2. Reminder booking H-1 via Email (runs daily at 08:00)
         $schedule->call(function () {
             $tomorrow = now()->addDay()->toDateString();
             $bookings = \App\Models\Booking::with(['user', 'court'])
@@ -38,15 +38,22 @@ class Kernel extends ConsoleKernel
 
             $notifier = new \App\Services\NotificationService();
             foreach ($bookings as $booking) {
-                if ($booking->user->phone) {
-                    $slots = implode(', ', $booking->slots);
-                    $msg = "Halo *{$booking->user->name}*,\n\n"
-                         . "Mengingatkan sesi main padel Anda di *PadelBook* besok! 🎾\n\n"
-                         . "• Lapangan: *{$booking->court->name}*\n"
-                         . "• Jam Sesi: *{$slots}*\n\n"
-                         . "Jangan terlambat dan tunjukkan tiket digital Anda saat kedatangan. Sampai jumpa! 💪";
-                         
-                    $notifier->sendWhatsApp($booking->user->phone, $msg);
+                try {
+                    $slots   = implode(', ', $booking->slots);
+                    $subject = '[PadelBook] Reminder Sesi Besok - ' . $booking->court->name;
+                    $message = "Halo {$booking->user->name},\n\n"
+                             . "Mengingatkan sesi main padel Anda di PadelBook besok! 🎾\n\n"
+                             . "• Lapangan: {$booking->court->name}\n"
+                             . "• Tanggal: " . $booking->date->format('d M Y') . "\n"
+                             . "• Jam Sesi: {$slots}\n\n"
+                             . "Jangan terlambat dan tunjukkan tiket digital Anda saat kedatangan.\n\n"
+                             . "Selamat berolahraga! 💪\nTim PadelBook";
+
+                    \Illuminate\Support\Facades\Mail::raw($message, function ($mail) use ($booking, $subject) {
+                        $mail->to($booking->user->email)->subject($subject);
+                    });
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\Log::error("Reminder email failed for Booking #{$booking->id}: " . $e->getMessage());
                 }
             }
         })->dailyAt('08:00');

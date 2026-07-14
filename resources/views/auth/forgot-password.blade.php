@@ -159,12 +159,12 @@
     transform: translateX(4px) translateY(-2px);
 }
 
-@keyframes pulse-whatsapp {
-    0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.4); transform: scale(1); }
-    50% { box-shadow: 0 0 20px rgba(74, 222, 128, 0.2); transform: scale(1.05); }
+@keyframes pulse-email {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); transform: scale(1); }
+    50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.2); transform: scale(1.05); }
 }
-.wa-icon-glow {
-    animation: pulse-whatsapp 3s infinite ease-in-out;
+.email-icon-glow {
+    animation: pulse-email 3s infinite ease-in-out;
 }
 
 /* Suppress redundant global layout errors */
@@ -175,17 +175,17 @@
 
 {{-- Icon + Heading --}}
 <div class="text-center mb-4">
-    <div class="wa-icon-glow" style="display:inline-flex;align-items:center;justify-content:center;
+    <div class="email-icon-glow" style="display:inline-flex;align-items:center;justify-content:center;
         width:68px;height:68px;border-radius:50%;margin-bottom:16px;
-        background:linear-gradient(135deg,rgba(74,222,128,0.18),rgba(74,222,128,0.05));
-        border:2px solid rgba(74,222,128,0.4);">
-        <i class="fa-brands fa-whatsapp" style="font-size:2rem;color:#4ade80;"></i>
+        background:linear-gradient(135deg,rgba(59,130,246,0.18),rgba(59,130,246,0.05));
+        border:2px solid rgba(59,130,246,0.4);">
+        <i class="fa-solid fa-envelope" style="font-size:1.8rem;color:#3b82f6;"></i>
     </div>
     <h2 style="font-family:var(--font-display);font-size:1.55rem;font-weight:800;color:var(--text-primary);margin-bottom:8px;letter-spacing:-0.01em;">
         Lupa Password?
     </h2>
     <p style="color:var(--text-secondary);font-size:0.88rem;line-height:1.55;margin:0;max-width:320px;margin-left:auto;margin-right:auto;">
-        Masukkan nomor WhatsApp terdaftar. Kode verifikasi (OTP) akan dikirim ke <strong style="color:#4ade80;font-weight:700;">nomor tersebut</strong>.
+        Masukkan alamat Email terdaftar. Kode verifikasi (OTP) akan dikirim ke <strong style="color:#3b82f6;font-weight:700;">email tersebut</strong>.
     </p>
 </div>
 
@@ -199,7 +199,7 @@
     <!-- Step 1 active -->
     <div class="step-item active">
         <div class="step-circle">1</div>
-        <span class="step-label">No. WA</span>
+        <span class="step-label">Email</span>
     </div>
     
     <!-- Step 2 inactive -->
@@ -219,23 +219,22 @@
     @csrf
     <div class="mb-4">
         <label class="form-label-sporty" style="margin-bottom: 8px;">
-            Nomor WhatsApp
+            Alamat Email
         </label>
 
-        <div class="premium-input-group @error('phone') is-invalid @enderror">
-            <div class="premium-input-icon">
-                <i class="fa-brands fa-whatsapp"></i>
+        <div class="premium-input-group @error('email') is-invalid @enderror">
+            <div class="premium-input-icon" style="background:rgba(59,130,246,0.08);color:#3b82f6;">
+                <i class="fa-solid fa-envelope"></i>
             </div>
-            <input type="tel" name="phone" id="phone"
+            <input type="email" name="email" id="email"
                    class="premium-input-field"
-                   placeholder="08xxxxxxxxxx"
-                   value="{{ old('phone') }}"
-                   inputmode="numeric"
-                   autocomplete="tel"
+                   placeholder="email@example.com"
+                   value="{{ old('email') }}"
+                   autocomplete="email"
                    required autofocus>
         </div>
 
-        @error('phone')
+        @error('email')
         <div style="margin-top:10px;display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.2);border-radius:12px;">
             <i class="fa-solid fa-circle-exclamation" style="color:#ef4444;font-size:0.9rem;flex-shrink:0;"></i>
             <span style="font-size:0.8rem;color:#fca5a5;font-weight:500;">{{ $message }}</span>
@@ -245,7 +244,7 @@
         <div style="margin-top:10px;display:flex;align-items:flex-start;gap:8px;">
             <i class="fa-solid fa-circle-info" style="color:var(--accent);font-size:0.82rem;margin-top:3px;flex-shrink:0;"></i>
             <span style="font-size:0.78rem;color:var(--text-muted);line-height:1.45;">
-                Gunakan format <strong>08xxxxxxxxxx</strong> seperti yang terdaftar saat membuat akun.
+                Gunakan email yang Anda daftarkan saat membuat akun.
             </span>
         </div>
     </div>

@@ -5,25 +5,61 @@ namespace App\Http\Controllers;
 use App\Actions\ProcessPaymentAction;
 use App\Models\Booking;
 use App\Services\PaymentService;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Class PaymentController
+ * 
+ * Mengelola pemrosesan transaksi pembayaran lapangan padel.
+ * Mendukung opsi pembayaran:
+ * - Saldo dompet digital (Wallet)
+ * - Midtrans Snap (QRIS, GoPay, DANA, ShopeePay, VA Bank, Minimarket, dll)
+ * - Upload resi transfer bank manual
+ * 
+ * Alur Midtrans Snap:
+ * 1. Frontend request Snap Token → `payWithMidtrans()`
+ * 2. Backend buat token via Midtrans API → kembalikan snap_token ke frontend
+ * 3. Frontend tampilkan popup Snap.js menggunakan token tersebut
+ * 4. Midtrans kirim webhook ke `midtransNotification()` saat transaksi selesai
+ * 5. Backend verifikasi signature SHA512 → update status booking
+ * 
+ * @package App\Http\Controllers
+ */
 class PaymentController extends Controller
 {
+    /**
+     * Service pengelola logika transaksi Midtrans & Wallet.
+     */
     protected PaymentService $paymentService;
+
+    /**
+     * Action untuk pembaruan status pembayaran & pemicu notifikasi admin.
+     */
     protected ProcessPaymentAction $processPaymentAction;
 
+    /**
+     * PaymentController constructor.
+     * 
+     * @param PaymentService $paymentService
+     * @param ProcessPaymentAction $processPaymentAction
+     */
     public function __construct(PaymentService $paymentService, ProcessPaymentAction $processPaymentAction)
     {
-        $this->paymentService = $paymentService;
+        $this->paymentService       = $paymentService;
         $this->processPaymentAction = $processPaymentAction;
     }
 
     /**
-     * Process checkout pay using Wallet balance.
+     * Memproses Pembayaran Menggunakan Saldo Wallet Pengguna.
+     * 
+     * @param Request $request
+     * @return JsonResponse
      */
-    public function payWithWallet(Request $request)
+    public function payWithWallet(Request $request): JsonResponse
     {
         $request->validate([
             'booking_id' => 'required|exists:bookings,id',
@@ -37,9 +73,10 @@ class PaymentController extends Controller
         }
 
         try {
+            // 1. Debet saldo wallet digital dan simpan log mutasi transaksi
             $this->paymentService->processWalletPayment($booking, $request->pay_amount);
             
-            // Confirm the booking
+            // 2. Eksekusi konfirmasi lunas pada record booking secara transaksional
             $this->processPaymentAction->execute(
                 $booking->id,
                 'wallet',
@@ -60,33 +97,43 @@ class PaymentController extends Controller
         }
     }
 
-
-
     /**
-     * Get DOKU Payment URL for booking.
+     * Membuat Snap Token Midtrans untuk Popup Pembayaran.
+     * 
+     * Endpoint ini dipanggil oleh frontend (AJAX) untuk mendapatkan snap_token.
+     * Token kemudian digunakan Snap.js untuk memunculkan popup pembayaran Midtrans.
+     * 
+     * @param Request $request
+     * @return JsonResponse
      */
-    public function payWithDoku(Request $request)
+    public function payWithMidtrans(Request $request): JsonResponse
     {
         $request->validate([
-            'booking_id' => 'required|exists:bookings,id',
-            'pay_amount' => 'required|numeric|min:0',
+            'booking_id'   => 'required|exists:bookings,id',
+            'pay_amount'   => 'required|numeric|min:0',
             'payment_type' => 'nullable|string',
         ]);
 
-        $booking = Booking::with('user')->findOrFail($request->booking_id);
+        $booking = Booking::with(['user', 'court'])->findOrFail($request->booking_id);
 
         if ($booking->user_id !== Auth::id()) {
             abort(403);
         }
 
         try {
-            $url = $this->paymentService->getDokuCheckoutUrl($booking, $request->pay_amount, $request->payment_type);
+            // Minta Snap Token dari Midtrans API (server-to-server)
+            $result = $this->paymentService->getMidtransSnapToken($booking, $request->pay_amount, $request->payment_type);
 
             return response()->json([
-                'success' => true,
-                'url' => $url
+                'success'      => true,
+                'snap_token'   => $result['snap_token'],
+                'redirect_url' => $result['redirect_url'],
+                'order_id'     => $result['order_id'],
+                // Client key dibutuhkan Snap.js untuk inisialisasi
+                'client_key'   => config('services.midtrans.client_key'),
             ]);
         } catch (\Exception $e) {
+            Log::error('Midtrans payWithMidtrans error: ' . $e->getMessage());
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage()
@@ -95,9 +142,165 @@ class PaymentController extends Controller
     }
 
     /**
-     * Mock payment success for testing when real keys are not set.
+     * Menangani Webhook Notification dari Server Midtrans.
+     * 
+     * Midtrans mengirimkan POST request ke endpoint ini setiap kali terjadi
+     * perubahan status transaksi (settlement, pending, cancel, expire, dll).
+     * 
+     * Keamanan: Setiap notifikasi diverifikasi menggunakan signature key
+     * SHA512(order_id + status_code + gross_amount + server_key).
+     * 
+     * @param Request $request
+     * @return JsonResponse
      */
-    public function payMock(Request $request)
+    public function midtransNotification(Request $request): JsonResponse
+    {
+        $payload = $request->all();
+
+        Log::info('Midtrans Notification Received', $payload);
+
+        // 1. Ekstrak field-field penting dari payload webhook Midtrans
+        $orderId           = $payload['order_id']           ?? null;
+        $statusCode        = $payload['status_code']        ?? null;
+        $grossAmount       = $payload['gross_amount']        ?? null;
+        $transactionStatus = $payload['transaction_status'] ?? null;
+        $fraudStatus       = $payload['fraud_status']       ?? null;
+        $paymentType       = $payload['payment_type']       ?? 'midtrans';
+        $transactionId     = $payload['transaction_id']     ?? $orderId;
+        $signatureKey      = $payload['signature_key']      ?? null;
+
+        // 2. Pastikan semua field wajib hadir
+        if (!$orderId || !$statusCode || !$grossAmount || !$transactionStatus) {
+            Log::warning('Midtrans Notification: Field tidak lengkap.', $payload);
+            return response()->json(['status' => 'bad_request'], 400);
+        }
+
+        // 3. Verifikasi Signature Key — pastikan webhook benar-benar dari Midtrans
+        if ($signatureKey) {
+            $isValid = $this->paymentService->verifyMidtransSignature(
+                $orderId, $statusCode, $grossAmount, $signatureKey
+            );
+            if (!$isValid) {
+                Log::warning('Midtrans Notification: Signature tidak valid.', [
+                    'order_id'      => $orderId,
+                    'received_sig'  => $signatureKey,
+                ]);
+                return response()->json(['status' => 'unauthorized'], 401);
+            }
+        } else {
+            // Jika tidak ada signature (request tidak aman), log saja sebagai warning
+            Log::warning('Midtrans Notification: Tidak ada signature_key dalam payload.');
+        }
+
+        // 4. Parse Booking ID dari Order ID
+        // Format Order ID: "PBDK-{booking_id}-{timestamp}" → parts[1] = booking_id
+        $parts = explode('-', $orderId);
+        if (count($parts) < 2 || strtoupper($parts[0]) !== 'PBDK') {
+            Log::warning('Midtrans Notification: Format order_id tidak dikenal.', ['order_id' => $orderId]);
+            return response()->json(['status' => 'ignored']);
+        }
+
+        $bookingId   = (int) $parts[1];
+        $amountFloat = (float) str_replace(',', '', $grossAmount); // Midtrans format: "150000.00"
+
+        // 5. Proses berdasarkan status transaksi Midtrans
+        // Referensi: https://docs.midtrans.com/docs/getting-notified-by-midtrans
+        if ($transactionStatus === 'capture') {
+            // "capture" digunakan untuk pembayaran kartu kredit
+            // Hanya konfirmasi jika fraud_status = 'accept'
+            if ($fraudStatus === 'accept') {
+                $this->confirmPayment($bookingId, 'midtrans_' . $paymentType, $transactionId, $amountFloat, $payload);
+            }
+        } elseif ($transactionStatus === 'settlement') {
+            // "settlement" = dana sudah diterima sepenuhnya (GoPay, VA, QRIS, dll)
+            $this->confirmPayment($bookingId, 'midtrans_' . $paymentType, $transactionId, $amountFloat, $payload);
+        } elseif (in_array($transactionStatus, ['cancel', 'expire', 'deny'], true)) {
+            // Transaksi dibatalkan/kadaluarsa/ditolak — log saja, tidak update booking ke failed otomatis
+            Log::info("Midtrans Notification: Transaksi {$transactionStatus} untuk Booking #{$bookingId}.", [
+                'order_id'           => $orderId,
+                'transaction_status' => $transactionStatus,
+            ]);
+        } elseif ($transactionStatus === 'pending') {
+            // Transaksi masih menunggu (misal: VA belum dibayar) — tidak perlu aksi
+            Log::info("Midtrans Notification: Transaksi pending untuk Booking #{$bookingId}.");
+        }
+
+        return response()->json(['status' => 'ok']);
+    }
+
+    /**
+     * Helper: Mengkonfirmasi Pembayaran Berhasil dan Update Status Booking.
+     * 
+     * @param int $bookingId
+     * @param string $gateway
+     * @param string $transactionId
+     * @param float $amount
+     * @param array $payload
+     * @return void
+     */
+    private function confirmPayment(
+        int $bookingId,
+        string $gateway,
+        string $transactionId,
+        float $amount,
+        array $payload
+    ): void {
+        try {
+            $this->processPaymentAction->execute(
+                $bookingId,
+                $gateway,
+                $transactionId,
+                $amount,
+                $payload,
+                'settlement'
+            );
+            Log::info("Midtrans: Booking #{$bookingId} berhasil dibayar via {$gateway}.");
+        } catch (\Exception $e) {
+            Log::error("Midtrans: Gagal memproses Booking #{$bookingId}. Error: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Mengunggah Bukti Pembayaran Transfer Bank Manual.
+     * 
+     * @param Request $request
+     * @param int $id ID dari Booking
+     * @return RedirectResponse
+     */
+    public function uploadReceipt(Request $request, int $id): RedirectResponse
+    {
+        $request->validate([
+            'receipt' => 'required|image|mimes:jpeg,png,jpg|max:2048', // batas berkas resi maksimal 2MB
+        ]);
+
+        $booking = Booking::findOrFail($id);
+
+        if ($booking->user_id !== Auth::id()) {
+            abort(403);
+        }
+
+        // Simpan berkas gambar resi ke folder storage public/receipts
+        if ($request->hasFile('receipt')) {
+            $path = $request->file('receipt')->store('receipts', 'public');
+            $booking->update([
+                'payment_receipt' => $path,
+                'payment_status'  => 'awaiting_approval', // status menunggu validasi manual admin
+                'payment_method'  => 'bank_transfer',
+            ]);
+        }
+
+        return redirect()->route('dashboard.bookings')->with('success', 'Bukti transfer berhasil diunggah. Menunggu persetujuan Admin.');
+    }
+
+    /**
+     * Simulasi Pembayaran Berhasil (Mock Payment) untuk Keperluan Pengujian Lokal.
+     * 
+     * PERHATIAN: Nonaktifkan endpoint ini di lingkungan produksi penuh.
+     * 
+     * @param Request $request
+     * @return JsonResponse
+     */
+    public function payMock(Request $request): JsonResponse
     {
         $request->validate([
             'booking_id' => 'required|exists:bookings,id',
@@ -110,9 +313,10 @@ class PaymentController extends Controller
             abort(403);
         }
 
+        // Langsung konfirmasi sukses lunas tanpa memanggil gateway asli
         $this->processPaymentAction->execute(
             $booking->id,
-            'doku_mock',
+            'midtrans_mock',
             'MOCK-TXN-' . $booking->id . '-' . time(),
             $request->pay_amount,
             ['mock_payment' => true],
@@ -123,133 +327,5 @@ class PaymentController extends Controller
             'success' => true,
             'message' => 'Simulasi pembayaran berhasil!'
         ]);
-    }
-
-    /**
-     * Upload manual bank transfer receipt.
-     */
-    public function uploadReceipt(Request $request, int $id)
-    {
-        $request->validate([
-            'receipt' => 'required|image|mimes:jpeg,png,jpg|max:2048',
-        ]);
-
-        $booking = Booking::findOrFail($id);
-
-        if ($booking->user_id !== Auth::id()) {
-            abort(403);
-        }
-
-        if ($request->hasFile('receipt')) {
-            $path = $request->file('receipt')->store('receipts', 'public');
-            $booking->update([
-                'payment_receipt' => $path,
-                'payment_status' => 'awaiting_approval',
-                'payment_method' => 'bank_transfer',
-            ]);
-        }
-
-        return redirect()->route('dashboard.bookings')->with('success', 'Bukti transfer berhasil diunggah. Menunggu persetujuan Admin.');
-    }
-
-    /**
-     * Handle incoming DOKU Webhook (Notification).
-     */
-    public function dokuCallback(Request $request)
-    {
-        $rawBody = $request->getContent();
-        $payload = json_decode($rawBody, true) ?? [];
-
-        Log::info('DOKU Webhook Received', [
-            'headers' => [
-                'Client-Id'         => $request->header('Client-Id'),
-                'Request-Id'        => $request->header('Request-Id'),
-                'Request-Timestamp' => $request->header('Request-Timestamp'),
-                'Signature'         => $request->header('Signature'),
-            ],
-            'payload' => $payload,
-        ]);
-
-        // --- Validasi Tanda Tangan (Signature) DOKU ---
-        $clientId         = $request->header('Client-Id');
-        $requestId        = $request->header('Request-Id');
-        $requestTimestamp = $request->header('Request-Timestamp');
-        $signatureHeader  = $request->header('Signature');
-
-        if (!$clientId || !$requestId || !$requestTimestamp || !$signatureHeader) {
-            Log::warning('DOKU Webhook: Missing required headers.');
-            return response()->json(['status' => 'bad_request'], 400);
-        }
-
-        $secretKey  = config('services.doku.secret_key');
-        $targetPath = $request->getPathInfo();
-
-        $digest = base64_encode(hash('sha256', $rawBody, true));
-
-        $signatureComponent = "Client-Id:" . $clientId . "\n"
-            . "Request-Id:" . $requestId . "\n"
-            . "Request-Timestamp:" . $requestTimestamp . "\n"
-            . "Request-Target:" . $targetPath . "\n"
-            . "Digest:" . $digest;
-
-        $calculatedSignature = "HMACSHA256=" . base64_encode(
-            hash_hmac('sha256', $signatureComponent, $secretKey, true)
-        );
-
-        if (!hash_equals($calculatedSignature, $signatureHeader)) {
-            Log::error('DOKU Webhook: Invalid Signature.', [
-                'calculated' => $calculatedSignature,
-                'received'   => $signatureHeader,
-            ]);
-            return response()->json(['status' => 'unauthorized'], 401);
-        }
-
-        // --- Signature valid, proses payload ---
-        $invoiceNumber     = $payload['order']['invoice_number'] ?? null;
-        $transactionStatus = $payload['transaction']['status']   ?? null;
-
-        if (!$invoiceNumber || !$transactionStatus) {
-            Log::warning('DOKU Webhook: Missing invoice_number or transaction status.', $payload);
-            return response()->json(['status' => 'ignored']);
-        }
-
-        // Format invoice_number: "BOOK-{booking_id}-{timestamp}"
-        // Contoh: "BOOK-42-1750123456"  => parts = ['BOOK', '42', '1750123456']
-        $parts = explode('-', $invoiceNumber);
-        if (count($parts) < 2 || strtoupper($parts[0]) !== 'BOOK') {
-            Log::warning('DOKU Webhook: Unrecognized invoice_number format.', ['invoice_number' => $invoiceNumber]);
-            return response()->json(['status' => 'ignored']);
-        }
-
-        $bookingId    = (int) $parts[1];
-        $grossAmount  = (float) ($payload['order']['amount'] ?? 0);
-        $paymentType  = 'doku_' . strtolower($payload['channel']['id'] ?? 'unknown');
-        $transactionId = $payload['transaction']['date'] ?? $invoiceNumber;
-
-        if ($transactionStatus === 'SUCCESS') {
-            try {
-                $this->processPaymentAction->execute(
-                    $bookingId,
-                    $paymentType,
-                    $transactionId,
-                    $grossAmount,
-                    $payload,
-                    'settlement'
-                );
-                Log::info("DOKU Webhook: Booking #{$bookingId} berhasil dibayar via {$paymentType}.");
-            } catch (\Exception $e) {
-                Log::error("DOKU Webhook: Gagal memproses Booking #{$bookingId}. Error: " . $e->getMessage());
-                // Tetap return 200 agar DOKU tidak mengirim ulang
-            }
-        } elseif ($transactionStatus === 'FAILED') {
-            Log::info("DOKU Webhook: Booking #{$bookingId} gagal/expired.", [
-                'invoice_number' => $invoiceNumber,
-                'status'         => $transactionStatus,
-            ]);
-        } else {
-            Log::info("DOKU Webhook: Status tidak dikenal '{$transactionStatus}' untuk Booking #{$bookingId}.");
-        }
-
-        return response()->json(['status' => 'success']);
     }
 }

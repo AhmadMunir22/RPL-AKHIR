@@ -31,14 +31,28 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
-    'fonnte' => [
-        'token' => env('FONNTE_TOKEN'),
+    'kata_ai' => [
+        'token' => env('KATA_AI_TOKEN'),
     ],
 
-    'doku' => [
-        'client_id' => env('DOKU_CLIENT_ID', ''),
-        'secret_key' => env('DOKU_SECRET_KEY', ''),
-        'is_production' => env('DOKU_IS_PRODUCTION', false),
+    'midtrans' => [
+        'server_key'    => env('MIDTRANS_SERVER_KEY', ''),
+        'client_key'    => env('MIDTRANS_CLIENT_KEY', ''),
+        'is_production' => env('MIDTRANS_IS_PRODUCTION', true),
+        // URL Snap.js — otomatis production/sandbox tergantung env
+        'snap_url'      => env('MIDTRANS_IS_PRODUCTION', true)
+            ? 'https://app.midtrans.com/snap/snap.js'
+            : 'https://app.sandbox.midtrans.com/snap/snap.js',
+        // Base URL API Snap untuk pembuatan token
+        'snap_api_url'  => env('MIDTRANS_IS_PRODUCTION', true)
+            ? 'https://app.midtrans.com/snap/v1/transactions'
+            : 'https://app.sandbox.midtrans.com/snap/v1/transactions',
+    ],
+
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
     ],
 
 ];

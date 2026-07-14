@@ -17,3 +17,20 @@ yarn-error.log
 /.fleet
 /.idea
 /.vscode
+
+# Database SQLite (jangan push data lokal ke GitHub)
+/database/database.sqlite
+/database/*.sqlite
+
+# Log files
+/storage/logs/*.log
+
+# Storage uploads (foto lapangan dll)
+/storage/app/public/*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Ngrok / tunnel config
+*.ngrok*
